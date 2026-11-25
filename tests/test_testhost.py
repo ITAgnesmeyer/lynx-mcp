@@ -1,6 +1,7 @@
 """Tests für den Test-Host (State-Datei,.pid-Erkennung) ohne echtes LYNX."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -9,8 +10,12 @@ from lynx_mcp import client, testhost
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path, monkeypatch):
-    """State/Log in tmp legen; Discovery ins Leere zeigen."""
+    """State/Log in tmp legen; Discovery ins Leere zeigen; keine echten
+    Installationsorte oder Fremd-ENVs durchscheinen lassen."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "pf-absent"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "pf86-absent"))
+    monkeypatch.delenv("LYNX_EXE", raising=False)
     monkeypatch.setenv("LYNX_CONTROL_DISCOVERY", str(tmp_path / "no-conn.json"))
     return tmp_path
 
@@ -78,3 +83,29 @@ def test_stop_discards_stale_state_but_kills_nothing(monkeypatch):
     monkeypatch.setattr(testhost, "_process_image", lambda pid: None)
     assert testhost.main(["stop"]) == 0
     assert testhost._read_state() is None  # State aufgeräumt, kein Kill-Versuch
+
+
+def test_exe_path_prefers_cli_then_env_then_state(tmp_path, monkeypatch):
+    # keine festen Pfade: CLI > LYNX_EXE > State > Installationsuche
+    exe = tmp_path / "install" / "LYNX.exe"
+    testhost._write_state({"pid": 1, "exe": r"C\state\LYNX.exe"})
+    monkeypatch.setenv("LYNX_EXE", str(exe))
+    assert testhost._exe_path(str(tmp_path / "cli.exe")) == tmp_path / "cli.exe"
+    assert testhost._exe_path() == exe
+    monkeypatch.delenv("LYNX_EXE")
+    assert testhost._exe_path() == Path(r"C\state\LYNX.exe")
+
+
+def test_exe_path_searches_install_locations(tmp_path, monkeypatch):
+    # kein CLI/env/state: Kandidaten aus LOCALAPPDATA/%ProgramFiles% werden geprüft
+    found = tmp_path / "Programs" / "LYNX" / "LYNX.exe"
+    found.parent.mkdir(parents=True)
+    found.write_bytes(b"")
+    assert testhost._exe_path() == found
+
+
+def test_exe_path_none_without_any_hit(monkeypatch, capsys):
+    # nichts gefunden, kein fester Default mehr — status bleibt lauffähig
+    assert testhost._exe_path() is None
+    assert testhost.main(["status"]) == 0
+    assert "LYNX_EXE" in capsys.readouterr().out

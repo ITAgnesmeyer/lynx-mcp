@@ -168,3 +168,17 @@ def test_large_reply_is_capped_not_dumped(mock):
     mock.respond("session.inspect", dict(TRIPLE, blob="x" * (server.MAX_REPLY_CHARS + 10)))
     r = server.lynx_session()
     assert r.get("truncated") is True and "lynx_snapshot" in r["hint"]
+
+
+def test_out_dir_prefers_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("LYNX_MCP_OUT_DIR", str(tmp_path / "woanders"))
+    assert server.out_dir() == tmp_path / "woanders"
+
+
+def test_out_dir_falls_back_to_localappdata_outside_checkout(tmp_path, monkeypatch):
+    # simuliere einen uvx-Lauf: Lynx_mcp in site-packages ohne pyproject.toml
+    monkeypatch.delenv("LYNX_MCP_OUT_DIR", raising=False)
+    monkeypatch.setattr(server, "__file__",
+                        str(tmp_path / "site-packages" / "lynx_mcp" / "server.py"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lap"))
+    assert server.out_dir() == tmp_path / "lap" / "lynx-mcp" / "out"

@@ -14,6 +14,8 @@ keiner Antwort, keinem Log, keinem Schema. stdout gehört dem MCP-Protokoll.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +23,23 @@ from mcp.server.mcpserver import MCPServer
 
 from . import __version__, client, fence, summarize
 
-OUT_DIR = Path(__file__).resolve().parents[1] / "out"
 MAX_REPLY_CHARS = 200_000     # Tool-Antworten gekürzt (~200 KiB, PLAN §4)
 SUMMARY_PAGES = 16            # <= 16 Seiten à 32 KiB pro summary-Read
 NOTE_WARN = 2000
+
+
+def out_dir() -> Path:
+    """Ziel für lynx_snapshot: LYNX_MCP_OUT_DIR > out/ im Repo (Dev-Checkout)
+    > %LOCALAPPDATA%\\lynx-mcp\\out (installierter Lauf, z. B. via uvx — dort
+    wäre das Paketverzeichnis flüchtig/schreibgeschützt)."""
+    env = os.environ.get("LYNX_MCP_OUT_DIR")
+    if env:
+        return Path(env)
+    repo = Path(__file__).resolve().parents[1]
+    if (repo / "pyproject.toml").is_file():
+        return repo / "out"
+    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    return Path(base) / "lynx-mcp" / "out"
 
 _fence = fence.Fence()
 _client: client.LynxClient | None = None
@@ -232,16 +247,19 @@ def lynx_read(scope: str = "summary", pattern_index: int | None = None,
 
 @mcp.tool()
 def lynx_snapshot(max_pages: int = 2048) -> dict[str, Any]:
-    """Komplettes Projekt-JSON auf Disk (out/) statt in den Kontext.
+    """Komplettes Projekt-JSON auf Disk statt in den Kontext.
 
-    Gibt Pfad + documentHash + Fence zurück; Basis für große lynx_patch-Pläne.
+    Zielpfad: Env LYNX_MCP_OUT_DIR, sonst out/ neben dem Repo (Dev) bzw.
+    %LOCALAPPDATA%\\lynx-mcp\\out (installierter Lauf). Gibt Pfad +
+    documentHash + Fence zurück; Basis für große lynx_patch-Pläne.
     Erfordert gestopptes Playback; Snapshot max 64 MiB, 4 behaltene Snapshots."""
     try:
         project, meta = _lynx().project_read_full(
             max_pages=max_pages, page_limit=65536)
         _fence.observe_snapshot(meta)
-        OUT_DIR.mkdir(exist_ok=True)
-        path = OUT_DIR / f"snapshot-{meta['projectId']}-r{meta['revision']}.json"
+        odir = out_dir()
+        odir.mkdir(parents=True, exist_ok=True)
+        path = odir / f"snapshot-{meta['projectId']}-r{meta['revision']}.json"
         path.write_text(json.dumps(project, ensure_ascii=False, indent=1),
                         encoding="utf-8")
         return {"path": str(path), "bytes": path.stat().st_size,

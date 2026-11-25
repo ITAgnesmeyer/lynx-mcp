@@ -67,9 +67,12 @@ uv run python -m lynx_mcp.testhost status        # Instanz-, exe- und Discovery-
 uv run python -m lynx_mcp.testhost stop          # nur die von testhost gestartete Instanz
 ```
 
-- Pfad zu `LYNX.exe`: Default `D:\audacity\LYNX\LYNX.exe`, überschreibbar mit
-  `--exe` oder Env `LYNX_EXE`; eine Projektdatei wird optional mit `--projekt`
-  zum Start übergeben.
+- **Keine festen Pfade:** `LYNX.exe` wird über Env `LYNX_EXE` (oder `--exe`)
+  gesetzt; ohne Angabe sucht testhost nur die üblichen Installationsorte
+  (`%LOCALAPPDATA%\Programs\LYNX`, `%ProgramFiles%\LYNX`). Eine Projektdatei
+  lässt sich optional mit `--projekt` übergeben.
+- Snapshots (`lynx_snapshot`) landen im Quellen-Checkout unter `out/`, sonst
+  unter `%LOCALAPPDATA%\lynx-mcp\out` — mit Env `LYNX_MCP_OUT_DIR` frei wählbar.
 - `stop` beendet ausschließlich Instanzen, die testhost selbst gestartet hat
   (PID-State-Datei + Bildnamen-Prüfung gegen PID-Wiederverwendung).
 - Verwaiste Discovery-Dateien (LYNX ohne Bereinigung beendet) erkennen

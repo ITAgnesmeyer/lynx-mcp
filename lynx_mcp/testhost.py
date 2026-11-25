@@ -14,7 +14,8 @@ Verwendung:
     python -m lynx_mcp.testhost stop  [--force] [--timeout SEK]
     python -m lynx_mcp.testhost status
 
-Env: LYNX_EXE             Pfad zu LYNX.exe (Default: D:\\audacity\\LYNX\\LYNX.exe)
+Env: LYNX_EXE             Pfad zu LYNX.exe (ohne Angabe werden die üblichen
+                               Installationsorte gesucht, s. _candidate_exes)
      LYNX_CONTROL_DISCOVERY   Discovery-Datei (Default %APPDATA%\\LYNX\\control)
 """
 
@@ -32,8 +33,22 @@ from typing import Any
 
 from . import client
 
-DEFAULT_EXE = Path(r"D:\audacity\LYNX\LYNX.exe")
 PROCESS_IMAGE = "LYNX.exe"
+
+
+def _candidate_exes() -> list[Path]:
+    """Übliche Installationsorte — nur aus OS-Variablen, ohne feste Laufwerksbuchstaben.
+
+    Per-User-Installer landen unter %LOCALAPPDATA%\\Programs, systemweite unter
+    %ProgramFiles%; LYNX installiert beides nach <base>\\LYNX\\LYNX.exe.
+    """
+    cands = []
+    for var in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(var)
+        if base:
+            cands.append(Path(base) / "LYNX" / "LYNX.exe")
+            cands.append(Path(base) / "Programs" / "LYNX" / "LYNX.exe")
+    return cands
 
 
 def _data_dir() -> Path:
@@ -66,7 +81,8 @@ def _clear_state() -> None:
     _state_file().unlink(missing_ok=True)
 
 
-def _exe_path(cli_value: str | None = None) -> Path:
+def _exe_path(cli_value: str | None = None) -> Path | None:
+    """LYNX.exe-Auflösung: --exe > Env LYNX_EXE > State-Datei > Installationsorte."""
     if cli_value:
         return Path(cli_value)
     env = os.environ.get("LYNX_EXE")
@@ -75,7 +91,7 @@ def _exe_path(cli_value: str | None = None) -> Path:
     state = _read_state()
     if state and state.get("exe"):
         return Path(state["exe"])
-    return DEFAULT_EXE
+    return next((c for c in _candidate_exes() if c.is_file()), None)
 
 
 def _process_image(pid: int) -> str | None:
@@ -124,6 +140,11 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 0
 
     exe = _exe_path(args.exe)
+    if exe is None:
+        print("FEHLER: LYNX.exe nicht auffindbar — Pfad über Env LYNX_EXE oder "
+              "--exe setzen (geprüft wurden %LOCALAPPDATA%/%ProgramFiles% unter "
+              "LYNX[/Programs]).", file=sys.stderr)
+        return 1
     if not exe.is_file():
         print(f"FEHLER: LYNX.exe nicht gefunden: {exe}", file=sys.stderr)
         print("Pfad mit --exe oder Env LYNX_EXE setzen.", file=sys.stderr)
@@ -204,7 +225,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         alive = "läuft" if running else "nicht mehr aktiv"
         print(f"testhost    : PID {state['pid']} ({alive}), exe={state.get('exe')}")
-    print(f"LYNX.exe    : {_exe_path()} ({'gefunden' if _exe_path().is_file() else 'FEHLT'})")
+    exe = _exe_path()
+    exe_word = (f"{exe} ({'gefunden' if exe.is_file() else 'FEHLT'})"
+                if exe else "nicht gefunden (Env LYNX_EXE oder --exe setzen)")
+    print(f"LYNX.exe    : {exe_word}")
     disc = client.default_discovery_path()
     print(f"Discovery   : {disc}")
     try:
@@ -228,7 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_start = sub.add_parser("start", help="LYNX detached starten und auf Discovery warten")
-    p_start.add_argument("--exe", help=f"Pfad zu LYNX.exe (Default: {DEFAULT_EXE})")
+    p_start.add_argument("--exe",
+                         help="Pfad zu LYNX.exe (Default: Env LYNX_EXE, sonst Suche "
+                              "in den Installationsorten)")
     p_start.add_argument("--projekt", metavar="DATEI",
                          help="Projektdatei beim Start öffnen (Best-Effort)")
     p_start.add_argument("--no-wait", action="store_true",
