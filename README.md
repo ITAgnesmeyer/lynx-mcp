@@ -39,12 +39,27 @@ Nach einem Publish auf PyPI genügt `uvx lynx-mcp`.
   "mcpServers": {
     "lynx": {
       "command": "uvx",
-      "args": ["--from", "D:\\github\\LYNX-MCP", "lynx-mcp"],
-      "env": { "LYNX_CONTROL_DISCOVERY": "%APPDATA%\\LYNX\\control\\connection.json" }
+      "args": ["--from", "<PFAD ZU DIESEM REPO>", "lynx-mcp"],
+      "env": {
+        "LYNX_CONTROL_DISCOVERY": "%APPDATA%\\LYNX\\control\\connection.json",
+        "LYNX_MCP_OUT_DIR": "%LOCALAPPDATA%\\lynx-mcp\\out"
+      }
     }
   }
 }
 ```
+
+(`--from` entfällt, sobald das Paket über PyPI installierbar ist; alle
+Env-Variablen sind optional — Defaults siehe Abschnitt Test-Host.)
+
+### Skill für Agenten (optional)
+
+Unter [`skills/lynx-remote-control/SKILL.md`](skills/lynx-remote-control/SKILL.md)
+liegt ein kurzes Workflow-Skill (OpenCode/Claude-Code-Format) für Clients,
+die Skills unterstützen: Lese-Schreib-Zyklus, Notes-Replace ohne
+Expression-Verlust, Snapshot→Patch→Undo-Choreographie. MCP-Clients ohne
+Skill-Support brauchen es nicht — die Regeln stecken auch in den
+Tool-Beschreibungen.
 
 ## Entwicklung / klassische Installation
 

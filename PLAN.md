@@ -172,6 +172,9 @@ zu wählen, z. B. `D:\projects\lynx-mcp\`):
   out/                    (von `lynx_snapshot` beschriebene Projekt-JSONs; Ort: Env
                           `LYNX_MCP_OUT_DIR`, sonst `%LOCALAPPDATA%\lynx-mcp\out`)
   tests/                  (Mock-Listener: Handshake + canned Ops gegen client.py)
+  skills/lynx-remote-control/SKILL.md
+                          (optionales Workflow-Skill für Skill-fähige Clients;
+                           Regeln leben zusätzlich in den Tool-Beschreibungen)
 ```
 
 MCP-Client-Konfiguration (Beispiel, OpenCode/`config.json`-Syntax):

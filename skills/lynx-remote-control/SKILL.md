@@ -1,0 +1,108 @@
+---
+name: lynx-remote-control
+description: >
+  Arbeitsweise für das lynx-mcp MCP-Server-Werkzeugset (lynx_*) zur Steuerung
+  einer laufenden LYNX-SHARE-Instanz über das lynx-control/1-Protokoll.
+  WHEN: LYNX-Projekt lesen/ändern, Patterns/Notes/Mixer/Playlist bearbeiten,
+  Tempo oder Transport setzen, Undo/Redo, "spiel das ab", "mach Pattern X …".
+---
+
+# LYNX Remote Control bedienen
+
+Der MCP-Server `lynx-mcp` spiegelt die lokale API einer laufenden
+LYNX-Instanz. Alle Regeln des Protokolls sind bereits in den
+Tool-Beschreibungen; dieses Skill ergänzt die **Choreographie** über
+mehrere Tools hinweg.
+
+## Goldene Regeln
+
+1. **Erst lesen, dann schreiben.** Jeder Write braucht einen frischen
+   Projektzustand (`lynx_status` oder `lynx_read scope=summary`). Das
+   Fence-Tripel setzt der Server selbst — nie `expected*`-Felder erfinden.
+2. **Ein akzeptierter Schreibschritt = genau ein natives Undo.** Kein
+   Auto-Rollback einbauen; zum Zurücktreten `lynx_history action=undo`.
+3. **Fehler `changed`:** das Projekt hat sich (auch per UI) bewegt — Zustand
+   neu lesen und Plan neu auflegen, nicht denselben Call wiederholen.
+4. **Fehler `uncertain`:** Leitung nach möglichem Write abgebrochen.
+   **Niemals automatisch wiederholen** — erst `lynx_status`/Read, dann
+   entscheiden.
+5. **Writes verlangen gestopptes Playback** (`lynx_transport action=stop`;
+   `stop` funktioniert auch bei veraltetem Fence).
+6. **Indizes sind flüchtig.** Nach Struktur-Änderungen (Channel/Pattern
+   anlegen, Effekt laden) stammen alle Indizes aus dem letzten Read —
+   `lynx_session` liefert sie neu.
+
+## Rezept 1 — Standardzyklus für eine kleine Änderung
+
+Beispiel „Mach Channel 2 leiser und das Tempo 140":
+
+```
+lynx_session                          # Index + aktuellen Zustand prüfen
+lynx_transport action=stop            # falls läuft
+lynx_channel_set index=1 volume=0.6   # (Indizes sind 0-basiert!)
+lynx_tempo_set bpm=140.0
+lynx_status                           # Revision stieg genau um 2 → ok
+```
+
+Jeder Write für sich prüfen; bei `changed` ab Schritt 1 neu beginnen.
+
+## Rezept 2 — Notes ändern (Expression nicht verlieren!)
+
+`lynx_notes_replace` ersetzt **alle** Notes eines Patterns. Vorbedingung
+aus der Doku:
+
+```
+loop über offset: lynx_read scope=pattern_notes pattern_index=N offset=…
+     → bis offset+gelesen == totalNotes   (leerend, in Pages)
+Notes in-memory modifizieren, dabei pro Note ALLE gelesenen Felder
+(start/length/pitch/velocity/… expression/chanceOne) unverändert
+mitschreiben, wo nichts geändert werden soll
+lynx_notes_replace pattern_index=N notes=[…]
+lynx_read scope=pattern_notes pattern_index=N   # Verify
+```
+
+Pattern-ID statt Index verwenden, wenn zwischen Read und Write andere
+Änderungen laufen könnten (`pattern_id=`-Form).
+
+## Rezept 3 — Großer Umbau (viele Fakten, ein Undo)
+
+```
+lynx_transport action=stop
+lynx_snapshot                       # Komplettes JSON auf Disk, Pfad merken
+→ Patch gegen diese Datei entwerfen (lynx_patch akzeptiert 1–128 RFC6902-Ops,
+  test/add/replace/remove; Arrays/Indizes in derselben Transaktion führen)
+lynx_patch patch=[…]                # EIN Undo-Schritt
+lynx_read scope=summary             # Verify statt blindes Vertrauen
+```
+
+Ohne frischen Snapshot antwortet `lynx_patch` mit `no_snapshot` — dann erst
+`lynx_snapshot` (oder `lynx_read scope=summary`), nie raten.
+Schreibgeschützt: Assets, Dateipfade, Plugin-States (dafür die
+`lynx_plugin_*`-Tools).
+
+## Rezept 4 — Params & Kits
+
+```
+lynx_catalog kind=instruments limit=…       # opaque IDs ('lynx:gen:Kick')
+lynx_channel_create instrument_id=…         # neuer Kanal inkl. Mixer-Slot
+lynx_plugin_inspect target={…}              # Parameterliste mit index-Werten
+lynx_plugin_parameters target={…} parameters=[{index, value 0..1,
+                             expectedValue}]   # expectedValue = Guard
+```
+
+`target` kommt wortwörtlich aus `lynx_plugin_inspect`
+(`{kind:"instrument", channelIndex}` oder
+`{kind:"effect", mixerIndex, effectIndex}`). Native Instrumente sind für
+`plugin.parameters_set` gesperrt — dann channel-Mixer-Werte nutzen.
+
+## Polling statt Push
+
+LYNX sendet keine Events. Nach fremden Änderungen (Nutzer tippt in der UI):
+`lynx_changes` (max 128, `gap:true` ⇒ Vollread nötig) oder einfach
+`lynx_status` — die Revision ist der günstige Ticker.
+
+## Wann gar nichts geht
+
+`not_running` ⇒ LYNX startet nicht oder Remote Control ist aus
+(*Settings → General → Remote control*, oder `LYNX_CONTROL_ENABLED=1`
+für einen Testlauf — siehe README, Abschnitt Test-Host).
