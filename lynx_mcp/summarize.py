@@ -1,12 +1,13 @@
 """Projekt-JSON → Kurzstruktur für kontextsparsame Reads (PLAN.md §2.3).
 
-`summarize()` reduziert ein Voll-/Seiten-Ergebnis von `project.read` auf:
-Tempo/Meter, Channel-Namen + IDs, Pattern-Liste (Name, Länge, Notencount),
-Arrangements, Mixer-Tracks, Automationen — jeweils mit Stable-IDs und
-Referenzpfaden (z. B. `/patterns/3/notes/…`) für Folgereads, plus Byte-Hash.
+`summarize()` reduziert ein Ergebnis von `project.read` auf Top-Level-Ebene:
+Tempo/Meter, Zählungen + Namen/UIDs großer Sammlungen (patterns, channels,
+mixer, playlist/Arrangements, Automationen) und Referenzpfade für Folgereads
+(`/patterns/3/notes/…`). Vollständige Seiten gibt nur `lynx_snapshot` auf Disk.
 
-Große Listen (Notes) werden nur gezählt, nie ins Context gegeben; Rohe
-Voll-JSON-Seiten gibt es nur auf expliziten Wunsch (`maxPages`/Cursor).
+Das native Format variiert mit dem Build — deshalb erkennt die Funktion
+Sammlungen heuristisch (Liste von Objekten) statt auf starre Schlüssel zu
+setzen; `api.describe`/`status` bleiben die Autorität für Einzelfelder.
 """
 
 from __future__ import annotations
@@ -14,29 +15,56 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-MAX_NOTES_WARN = 2000  # Warnung bei > 2000 Notes pro Aufruf (§7 Risiko)
+MAX_NOTE_WARN = 2000   # Warnung bei > 2000 Notes pro pattern (§7 Risiko)
+MAX_SAMPLES = 12       # Namen, die pro Sammlung gezeigt werden
 
 
 def document_hash(payload: bytes | str) -> str:
-    """Byte-Hash über die Read-Antwort (für Fence/Dokumentation)."""
+    """Byte-Hash über die Read-Antwort (SHA-256, wie documentHash der Doku)."""
     if isinstance(payload, str):
         payload = payload.encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
-def summarize(project: dict[str, Any]) -> dict[str, Any]:
-    """Kurzdarstellung eines Projekt-Baums; Detailpfade statt Vollausgabe.
+def _entry_name(item: Any) -> Any:
+    if isinstance(item, dict):
+        return item.get("name") or item.get("title") or item.get("label")
+    return None
 
-    TODO(M2): echte Felder aus project.read mappen (channels, patterns,
-    playlist/arrangement, mixer, automations) inkl. Notencount und Warnung
-    bei > MAX_NOTES_WARN Notes.
-    """
-    patterns = project.get("patterns", []) if isinstance(project, dict) else []
-    note_counts = [len(p.get("notes", [])) for p in patterns if isinstance(p, dict)]
-    return {
-        "patternCount": len(patterns),
-        "tempo": project.get("tempo") if isinstance(project, dict) else None,
-        "meter": project.get("meter") if isinstance(project, dict) else None,
-        "totalNotes": sum(note_counts),
-        "largeNoteList": any(c > MAX_NOTES_WARN for c in note_counts),
-    }
+
+def _note_count(items: list) -> int:
+    total = 0
+    for it in items:
+        if isinstance(it, dict):
+            for key in ("notes", "events"):
+                v = it.get(key)
+                if isinstance(v, list):
+                    total = max(total, len(v))
+    return total
+
+
+def summarize(project: dict[str, Any]) -> dict[str, Any]:
+    """Kurzdarstellung eines Projekt-Baums; Detailpfade statt Vollausgabe."""
+    out: dict[str, Any] = {"collections": {}, "notesLarge": False}
+    if not isinstance(project, dict):
+        raise TypeError("summarize erwartet ein JSON-Objekt")
+    for key in ("bpm", "tempo"):
+        if key in project:
+            out["tempo"] = {key: project[key]}
+    if isinstance(project.get("meter"), dict):
+        out["meter"] = project["meter"]
+    for key, value in project.items():
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            names = [_entry_name(v) for v in value[:MAX_SAMPLES]]
+            notes = _note_count(value) if key in ("patterns", "pattern") else 0
+            if notes > MAX_NOTE_WARN:
+                out["notesLarge"] = True
+            out["collections"][key] = {
+                "count": len(value),
+                "names": [n for n in names if n is not None],
+                "maxNotesOrEvents": notes or None,
+                "readPath": f"/{key}/<index>",
+            }
+        elif isinstance(value, dict):
+            out.setdefault("objects", {})[key] = sorted(value.keys())[:20]
+    return out
