@@ -18,6 +18,7 @@ Konfiguration:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -81,12 +82,26 @@ def _probe(discovery_path: Path) -> int:
         return 2
     print(f"OK: {info['protocol']}, Port {info['port']}, pid {info['pid']} "
           f"(Prozess {info['pid']} ist {listener}).", file=sys.stderr)
-    # Vollständiger Handshake + Ops folgen in M1 (client.LynxClient).
-    print(
-        "Handshake/Status-Abfrage ist noch nicht implementiert (Meilenstein M1).",
-        file=sys.stderr,
-    )
-    return 1
+    conn = client.LynxClient(discovery_path)
+    try:
+        desc = conn.request("api.describe")
+        ops = desc.get("ops") or desc.get("operations") or []
+        names = sorted(o if isinstance(o, str) else o.get("name", "?") for o in ops)
+        print(f"api.describe: {len(names)} Ops unterstützt.", file=sys.stderr)
+        print("  " + ", ".join(names), file=sys.stderr)
+        status = conn.request("status")
+        shown = {k: v for k, v in status.items()
+                 if k in ("projectId", "controlEpoch", "revision", "bpm", "tempo",
+                          "transport", "position", "playback") or k.endswith("Count")}
+        print(f"status: {json.dumps(shown)}", file=sys.stderr)
+    except client.LynxError as exc:
+        print(f"FEHLER von LYNX [{exc.code}]: {exc}", file=sys.stderr)
+        return 1
+    except client.ProtocolError as exc:
+        print(f"PROTOKOLLFEHLER: {exc}", file=sys.stderr)
+        return 1
+    print("Handshake + Ops OK — Remote Control erreichbar.", file=sys.stderr)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

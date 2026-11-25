@@ -76,25 +76,42 @@ Module:
    mit Stable-IDs/Referenzpfaden für Folgereads (`/patterns/3/notes/…`), plus Byte-Hash.
 4. **`server.py`** — MCP-Werkzeugfläche (Abschnitt 3), Fehler-Mapping auf lesbare Texte.
 
-## 3. Tool-Oberfläche (v1)
+## 3. Tool-Oberfläche (v1, as-built M1–M5)
 
-| Tool | Parameter | Wrapper um | Bemerkung |
-|---|---|---|---|
-| `lynx_describe` | – | `api.describe` | Liste der vom Build unterstützten Ops/Capabilities zurück; Tools daraus dynamisch annotieren |
-| `lynx_status` | – | `status` | Identität, `revision`, Tempo, Meter, Transport, Position, Pattern, Counts |
-| `lynx_changes` | `fromRevision`, `limit?` | `changes` | max 128; `gap` → Hinweis „Vollread nötig" |
-| `lynx_read` | `scope: summary\|pattern_notes\|playlist\|session`, `patternIndex?`, `offset?/cursor?` | `project.read` (Paging) / `pattern.notes` / `playlist.inspect` / `session.inspect` | `summary` ist Default; Rohe Voll-JSON-Seiten nur auf expliziten Wunsch |
-| `lynx_snapshot` | `maxPages?` | `project.read` | kompletter Snapshot auf Disk (`out/`-Ordner neben Server, Pfad zurück) statt Kontext-Flut |
-| `lynx_patch` | `patch` (RFC 6902 Array, 1–128 Ops) | `project.edit` | Fence-Felder werden **serverseitig** eingesetzt; Antwort: `changed`, `operationCount`, neue Revision, `documentHash` |
-| `lynx_pattern_create` | `index?`, `name?`, `lengthTicks?` | `pattern.create` | Capability-Check via `describe` |
-| `lynx_pattern_clone` | `index`, `name?` | `pattern.clone` | |
-| `lynx_pattern_set` | `index`, `name?`, `lengthTicks?` | `pattern.set` | |
-| `lynx_notes_replace` | `patternIndex`/`patternId`, `notes` (vollständige Felder inkl. defaults) | `pattern.replace_notes` | Vorbedingung: leerender Read derselben Notes (Doku: expression nicht verlieren) |
-| `lynx_param_set` | `device`, `parameter`, `value01` (Batch) | typisierte Parameter-Ops | normalisierte `0..1`-Werte |
-| `lynx_transport` | `action: play\|stop` | `transport.play/stop` | stop funktioniert auch bei stale Fence (dokumentiert) |
-| `lynx_history` | `action: undo\|redo`, `expectedDeviceStateHash?` | `history.undo/redo` | Ownership des Top-Steps erforderlich (Doku-Hinweis im Tool-Text) |
-| `lynx_device_state` | – | `device.state` | Hash-only |
-| `lynx_catalog` | `kind: instruments\|effects`, `cursor?` | `instrument.catalog` / `effect.catalog` | Paginiert |
+Alle 29 Ops des verifizierten Builds sind abgedeckt; Fence-Felder werden
+**serverseitig** aus dem letzten Read gesetzt (kein Modell-Argument):
+
+| Tool | Wrapper um | Bemerkung |
+|---|---|---|
+| `lynx_describe` | `api.describe` | Autorität für Ops/Limits dieser Instanz |
+| `lynx_status` | `status` | Identität, `revision`, Tempo, Meter, Transport, Counts |
+| `lynx_session` | `session.inspect` | Bounded Übersicht inkl. Channels/Mixer/Clips, `canUndo`/`canRedo` |
+| `lynx_changes` | `changes` | max 128; `gap` → Vollread-Hinweis, Fence stale |
+| `lynx_device_state` | `device.state` | `deviceStateHash` only |
+| `lynx_read` | `project.read`/`pattern.notes`/`playlist.inspect`/`session.inspect` | `scope: summary\|pattern_notes\|playlist\|session`; Paging über `offset`/`limit` |
+| `lynx_snapshot` | `project.read` | kompletter Snapshot auf Disk (`out/`), Pfad + `documentHash` |
+| `lynx_catalog` | `instrument.catalog` / `effect.catalog` | Paginiert über `offset`; IDs sind opaque Strings |
+| `lynx_plugin_inspect` | `plugin.inspect` | mit/ohne `target`; Parameterwerte normalisiert 0..1 |
+| `lynx_patch` | `project.edit` | JSON Patch 1–128 = 1 Undo; braucht frischen Snapshot |
+| `lynx_tempo_set` | `tempo.set` | `bpm`; selber Wert = No-op ohne Revision |
+| `lynx_pattern_create/clone/set` | `pattern.*` | `_set` ohne Felder = No-op ohne Revision |
+| `lynx_notes_replace` | `pattern.replace_notes` | leerender Vor-Read Pflicht (expression-Felder!) |
+| `lynx_channel_create` | `channel.create` | `instrumentId` (Pflicht), `name?`, `mixerIndex?` |
+| `lynx_channel_set` | `channel.set` | `index` + mindestens eins: `name/volume/pan/muted` |
+| `lynx_mixer_set` | `mixer.set` | `index` + mindestens eins: `volume/pan/muted/solo` |
+| `lynx_instrument_replace` | `instrument.replace` | `channelIndex` + `instrumentId` |
+| `lynx_effect_load/remove` | `effect.load/remove` | `mixerIndex` + `effectId` bzw. `effectIndex` |
+| `lynx_plugin_parameters` | `plugin.parameters_set` | `target` (aus inspect) + 1–64 `{index,value,expectedValue?}` |
+| `lynx_playlist_edit` | `playlist.edit` | 1–128 Edits: `add/update/duplicate/remove` |
+| `lynx_transport` | `transport.play/stop` | stop geht auch bei stale Fence |
+| `lynx_history` | `history.undo/redo` | `expectedDeviceStateHash?` als Guard |
+
+Live-verifizierte Protokoll-Details (Probing Nov 2026, Build 0.1.31.1):
+Read-Ops **lehnen** `expected*`-Felder ab (›Unknown field‹); Write-Ops prüfen das
+Fence **vor** den Argumenten; `channel.create` rejects unbekannte Felder hart,
+`mixer.set`/`channel.set` ignorieren unbekannte Controls still; Effekte/Mixer
+zahlen 0-basiert (Master = 0); native Instrumente sind für
+`plugin.parameters_set` gesperrt (›This instrument is native‹).
 
 Reserviert für v2: `ui.*`/`session.*` (nur im `--demo`-Run sichtbar; über `describe`
 automatisch als Capability erkannt), `device_state_hash`-Guards in `lynx_patch`.
@@ -121,15 +138,15 @@ Plugin-States (Allowlist).*
 
 ## 5. Meilensteine
 
-| # | Deliverable | Akzeptanz |
-|---|---|---|
-| M0 | Repo-Skelett im neuen Repo-Ordner außerhalb von `D:\audacity\LYNX` (§0): `lynx_mcp/`, `pyproject.toml`, `README.md`, `PLAN.md` (diese Doku) | `pip install -e .`, `python -m lynx_mcp --help` |
-| M1 | `client.py` + CLI-Rauchtest gegen laufende Instanz | `status`/`describe` liefern korrekte JSON über Discovery+Handshake; Token-Handling wie Vorlage; Negativtest: manipuliertes Discovery-File wird abgelehnt |
-| M2 | `fence.py` + Read-Pipeline (`summary`, Paging, `snapshot` auf Disk) | Vollständiger Read eines mittelgroßen Projekts (Demo.lynx) ohne Kontext-Überschwemmung; `documentHash`-Verifikation |
-| M3 | MCP-Server, read-only Tools (`describe/status/changes/read/catalog/device_state`) | In OpenCode/Claude-Desktop einbindbar; Agent kann „Wie ist das Projekt gebaut?" beantworten |
-| M4 | Schreib-Tools: `transport`, `pattern.*`, `notes_replace`, `param_set`, `history` | Agent legt Pattern an, ersetzt Notes, spielt; jeder Schritt = 1 Undo; Undo-Ritt funktioniert |
-| M5 | `lynx_patch` (JSON Patch) + Edge-Cases | Tempo+Umbenennung in **einem** Undo-Schritt; dangling refs/`changed`/`busy`/`uncertain` sauber gemappt; Write-once-Verhalten nachgewiesen |
-| M6 | Härtung & Doku | Tool-Beschreibungen mit Protocol-Regeln; Logs anonymisiert; Config-Doku; Optional: Upstream-PR als `examples/mcp_server.py` |
+| # | Deliverable | Akzeptanz | Status |
+|---|---|---|---|
+| M0 | Repo-Skelett im neuen Repo-Ordner außerhalb von `D:\audacity\LYNX` (§0): `lynx_mcp/`, `pyproject.toml`, `README.md`, `PLAN.md` (diese Doku) | `pip install -e .`, `python -m lynx_mcp --help` | ✅ |
+| M1 | `client.py` + CLI-Rauchtest gegen laufende Instanz | `status`/`describe` liefern korrekte JSON über Discovery+Handshake; Token-Handling wie Vorlage; Negativtest: manipuliertes Discovery-File wird abgelehnt | ✅ live verifiziert (`probe`), Protokolltests |
+| M2 | `fence.py` + Read-Pipeline (`summary`, Paging, `snapshot` auf Disk) | Vollständiger Read eines mittelgroßen Projekts (Demo.lynx) ohne Kontext-Überschwemmung; `documentHash`-Verifikation | ✅ Paging/Hash-Verify live, Tests grün |
+| M3 | MCP-Server, read-only Tools (`describe/status/changes/read/catalog/device_state` + `session.inspect`, `plugin.inspect`) | In OpenCode/Claude-Desktop einbindbar; Agent kann „Wie ist das Projekt gebaut?" beantworten | ✅ live Roundtrip aller Read-Tools |
+| M4 | Schreib-Tools: `transport`, `pattern.*`, `notes_replace`, `tempo/mixer/channel/instrument/effect/plugin/playlist`, `history` | Agent legt Pattern an, ersetzt Notes, spielt; jeder Schritt = 1 Undo; Undo-Ritt funktioniert | ⚠️ Mock-getestet; live bisher nur Reads + No-op (`tempo.set` gleicher Wert) |
+| M5 | `lynx_patch` (JSON Patch) + Edge-Cases | Tempo+Umbenennung in **einem** Undo-Schritt; dangling refs/`changed`/`busy`/`uncertain` sauber gemappt; Write-once-Verhalten nachgewiesen | ⚠️ Snapshot-Fence implementiert + Mock-Test; live-Write noch offen |
+| M6 | Härtung & Doku | Tool-Beschreibungen mit Protocol-Regeln; Logs anonymisiert; Config-Doku; Optional: Upstream-PR als `examples/mcp_server.py` | ◐ Beschreibungen/Doku fertig; Live-Write-Ritt steht aus |
 
 Geschätzter Aufwand: M0–M2 ≈ 0,5 Tage, M3 ≈ 0,5 Tage, M4–M5 ≈ 1–1,5 Tage (Testarbeit mit
 laufendem LYNX), M6 ≈ 0,5 Tage.

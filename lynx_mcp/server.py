@@ -1,15 +1,19 @@
-"""MCP-Tool-Fläche (stdio) — Tool-Menge aus PLAN.md §3.
+"""MCP-Tool-Fläche (stdio) — vollständige lynx-control/1-Oberfläche.
 
-Status: v1-Gerüst. Tools werden nach und nach je Meilenstein freigeschaltet
-(read-only in M3, schreiben in M4, Patch in M5).
+Alle 29 Ops des Build 0.1.31.1 sind abgedeckt (per Live-Probing verifiziert,
+Nov 2026). Regeln aus der Protokoll-Doku, die die Tool-Schemas transportieren:
+Schreiboperationen erfordern gestopptes Playback und ein frisches Fence-Tripel
+(projectId/epoch/revision — wird serverseitig gesetzt, nie vom Caller);
+`uncertain`-Fehler niemals automatisch wiederholen; nach strukturellem Change
+immer neu lesen; Patches ändern keine Assets/Pfade/Plugin-States (Allowlist).
 
-Wichtig: stdout gehört dem MCP-Protokoll. Jegliche Diagnostik nach stderr.
-Das Token aus der Discovery-Datei darf in keiner Tool-Ausgabe, keinem Log und
-keinem Schema auftauchen.
+Token-Disziplin: Discovery wird nur im client gelesen; das Token erscheint in
+keiner Antwort, keinem Log, keinem Schema. stdout gehört dem MCP-Protokoll.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -17,67 +21,480 @@ from mcp.server.mcpserver import MCPServer
 
 from . import __version__, client, fence, summarize
 
-# Eine MCP-Session = ein Prozess; das Fence-Gedächtnis lebt prozesslang.
+OUT_DIR = Path(__file__).resolve().parents[1] / "out"
+MAX_REPLY_CHARS = 200_000     # Tool-Antworten gekürzt (~200 KiB, PLAN §4)
+SUMMARY_PAGES = 16            # <= 16 Seiten à 32 KiB pro summary-Read
+NOTE_WARN = 2000
+
 _fence = fence.Fence()
+_client: client.LynxClient | None = None
 
 mcp = MCPServer("lynx-mcp", version=__version__)
 
 
 def run(discovery_path: Path | None = None) -> None:
     """Startet den MCP-Server über stdio (blockierend)."""
-    # Discovery-Pfad optional vorkonfigurieren; Tools prüfen lazily beim Aufruf.
+    global _client
     if discovery_path is not None:
-        _configure_discovery(discovery_path)
+        _client = client.LynxClient(discovery_path)
     mcp.run(transport="stdio")
 
 
-_config = {"discovery": None}
+def _lynx() -> client.LynxClient:
+    global _client
+    if _client is None:
+        _client = client.LynxClient()
+    return _client
 
 
-def _configure_discovery(path: Path) -> None:
-    _config["discovery"] = path
+# --- Fehler-Mapping (lesbar, ohne Token) --------------------------------------
+
+def _fail(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, client.LynxError):
+        if exc.code == "changed":
+            _fence.mark_stale("changed")
+            detail = (f"{exc}. Projekt hat sich seit dem letzten Read geändert — "
+                      "Zustand mit lynx_status oder lynx_read (scope=summary) "
+                      "erneuern, dann neu planen.")
+        elif exc.code == "busy":
+            detail = (f"{exc}. LYNX ist beschäftigt (Playback/Aufnahme?) — "
+                      "lynx_transport action=stop oder abwarten.")
+        else:
+            detail = str(exc)
+        return {"error": exc.code, "detail": detail, "uncertain": exc.uncertain}
+    if isinstance(exc, client.DiscoveryError):
+        return {"error": "not_running", "detail": str(exc)}
+    if isinstance(exc, client.ProtocolError):
+        return {"error": "protocol", "detail": str(exc)}
+    return {"error": exc.__class__.__name__, "detail": str(exc)}
 
 
-def _client() -> client.LynxClient:
-    return client.LynxClient(_config["discovery"])
+def _read(op: str, args: dict | None = None) -> Any:
+    """Read-Op; frische Fence-Felder aus der Antwort werden beobachtet.
+
+    Read-Ops lehnen expected*-Felder ab ('Unknown field') — hier nie mitsenden.
+    """
+    try:
+        result = _lynx().request(op, args)
+        _fence.observe(**{
+            "project_id": result.get("projectId"),
+            "control_epoch": result.get("controlEpoch"),
+            "revision": result.get("revision")})
+        return _cap(result)
+    except Exception as exc:
+        return _fail(exc)
 
 
-# --- Read-only Tools (M3) -------------------------------------------------
+def _write(op: str, args: dict, snapshot: bool = False) -> Any:
+    """Schreib-Op mit serverseitig gesetzten Fence-Feldern (Read-before-Write)."""
+    try:
+        _fence.require_fresh(op)
+        guarded = dict(args)
+        guarded.update({
+            "expectedProjectId": _fence.state.project_id,
+            "expectedEpoch": _fence.state.control_epoch,
+            "expectedRevision": _fence.state.revision,
+        })
+        if snapshot:
+            snap = _fence.take_snapshot()
+            if snap is None:
+                return {"error": "no_snapshot",
+                        "detail": "project.edit braucht einen frischen Vollread: "
+                                  "zuerst lynx_read scope=summary oder lynx_snapshot."}
+            guarded.update(snap)
+        result = _lynx().request(op, guarded)
+        _fence.observe(**{
+            "project_id": result.get("projectId"),
+            "control_epoch": result.get("controlEpoch"),
+            "revision": result.get("revision")})
+        # Snapshots sind nach jedem Write verbraucht (jede Change-Transaktion
+        # invalidiert alte Snapshots); observe() ignoriert None, also explizit.
+        _fence.state.snapshot_id = None
+        _fence.state.document_hash = None
+        return _cap(result)
+    except fence.StaleFenceError as exc:
+        return {"error": "stale_fence", "detail": str(exc)}
+    except Exception as exc:
+        return _fail(exc)
+
+
+def _cap(obj: Any) -> Any:
+    """Antworten auf ~200 KiB begrenzen, sonst Kontext-Flut (PLAN §4)."""
+    try:
+        text = json.dumps(obj, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return obj
+    if len(text) <= MAX_REPLY_CHARS:
+        return obj
+    return {"truncated": True, "sizeBytes": len(text.encode("utf-8")),
+            "hint": "Antwort zu groß für den Kontext — lynx_snapshot schreibt das "
+                    "Komplette auf Disk, oder paginiert lesen (offset/limit)."}
+
+
+def _clean(**pairs: Any) -> dict[str, Any]:
+    """Args-Dict ohne None-Werte (LYNX meldet 'Unknown field' bei null-Fields)."""
+    return {k: v for k, v in pairs.items() if v is not None}
+
+
+# --- Observieren ---------------------------------------------------------------
 
 @mcp.tool()
 def lynx_describe() -> dict[str, Any]:
-    """Liste der vom laufenden LYNX-Build unterstützten Ops/Capabilities.
+    """Ops/Capabilities/Limits dieser Instanz (api.describe).
 
-    Quelle ist `api.describe`. Der Server startet auch ohne laufende Instanz
-    und meldet dann einen lesbaren Status statt eines Absturzes.
-    """
-    return _safe_call("api.describe")
+    Autoritative Quelle dafür, welche Ops dieser Build hat. Funktioniert ohne
+    laufendes LYNX mit freundlichem 'not_running'-Status."""
+    return _read("api.describe")
 
 
 @mcp.tool()
 def lynx_status() -> dict[str, Any]:
-    """Identität, revision, Tempo, Meter, Transport, Position, Pattern, Counts."""
-    result = _safe_call("status")
-    if "projectId" in result:
-        _fence.observe(
-            project_id=result["projectId"],
-            control_epoch=result.get("controlEpoch"),
-            revision=result.get("revision"),
-        )
+    """Identität, revision, Tempo, Meter, Transport, Position, Counts (status).
+
+    Günstigster Weg, das Fence (projectId/epoch/revision) aufzufrischen —
+    vor jedem Write-Plan zuerst hiermit oder lynx_read den Zustand prüfen."""
+    return _read("status")
+
+
+@mcp.tool()
+def lynx_session() -> dict[str, Any]:
+    """Bounded Übersicht: Projektname/pfad, Channels, Mixer, Patterns,
+    Playlist-Clips, Transport, canUndo/canRedo (session.inspect).
+
+    Deutlich billiger als ein Vollread; Channels/Mixer-Einträge liefern die
+    index-Werte für die .set-Tools."""
+    return _read("session.inspect")
+
+
+@mcp.tool()
+def lynx_changes(from_revision: int | None = None, limit: int | None = None) -> dict[str, Any]:
+    """Bounded Polling-Feed von Revisionsänderungen, max 128 (changes).
+
+    gap:true heißt: Änderungen außerhalb des Puffers — vor weiteren
+    Schlüssen Vollread (lynx_read scope=summary). Kein Push-Abo."""
+    if from_revision is None:
+        if _fence.state.revision is None:
+            return {"error": "stale_fence",
+                    "detail": "Ohne from_revision braucht es einen bekannten "
+                              "Zustand: erst lynx_status aufrufen."}
+        from_revision = _fence.state.revision
+    result = _read("changes", _clean(fromRevision=from_revision,
+                                     limit=min(int(limit), 128) if limit else None))
+    if isinstance(result, dict) and result.get("gap"):
+        _fence.mark_stale("changes-gap")
+        result = dict(result, hint="gap — Vollread nötig (lynx_read scope=summary)")
     return result
 
 
-def _safe_call(op: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Führt eine (idempotente) Read-Op aus; Fehler als lesbare Texte statt Tracebacks."""
+@mcp.tool()
+def lynx_device_state() -> dict[str, Any]:
+    """deviceStateHash über Channel-/Mixer-/Nested-Geräte-State (device.state).
+
+    Vendor-GUIs können opaque State ohne Revision ändern — zusätzlich zu
+    revisions prüfen. Erfordert gestopptes Playback/Recording."""
+    return _read("device.state")
+
+
+# --- Lesen -----------------------------------------------------------------------
+
+@mcp.tool()
+def lynx_read(scope: str = "summary", pattern_index: int | None = None,
+              pattern_id: str | None = None, offset: int | None = None,
+              limit: int | None = None) -> dict[str, Any]:
+    """Projektzustand kontextsparsam lesen.
+
+    scope=summary (Default): interner Vollread, Kurzfassung + Fence fürs
+    Write-Gedächtnis. pattern_notes: paginierte Notes (vor replace_notes
+    immer ALLE leerend lesen!). playlist: Clips/Tracks einer Anordnung.
+    Rohe Voll-JSON-Seiten gibt bewusst nur lynx_snapshot auf Disk."""
     try:
-        return _client().call(op, params)
-    except client.DiscoveryError as exc:
-        return {"error": "not_running", "detail": str(exc)}
-    except NotImplementedError as exc:
-        return {"error": "not_implemented", "detail": str(exc)}
-    except Exception as exc:  # Fehler-Mapping auf lesbare Texte (kein Token-Leak)
-        return {"error": exc.__class__.__name__, "detail": str(exc)}
+        if scope == "summary":
+            project, meta = _lynx().project_read_full(max_pages=SUMMARY_PAGES)
+            _fence.observe_snapshot(meta)
+            out = summarize.summarize(project)
+            out["fence"] = {k: meta[k] for k in
+                            ("projectId", "controlEpoch", "revision")}
+            return out
+        if scope == "pattern_notes":
+            return _read("pattern.notes",
+                         _clean(index=pattern_index, patternId=pattern_id,
+                                offset=offset, limit=limit))
+        if scope == "playlist":
+            return _read("playlist.inspect", _clean(offset=offset, limit=limit))
+        if scope == "session":
+            return _read("session.inspect")
+        return {"error": "invalid",
+                "detail": f"unbekannter scope {scope!r} "
+                          "(summary|pattern_notes|playlist|session)"}
+    except Exception as exc:
+        return _fail(exc)
 
 
-# Weitere Tools (lynx_changes/read/snapshot/patch/pattern_*/notes_replace/
-# param_set/transport/history/device_state/catalog) folgen gemäß §3 und M3–M5.
+@mcp.tool()
+def lynx_snapshot(max_pages: int = 2048) -> dict[str, Any]:
+    """Komplettes Projekt-JSON auf Disk (out/) statt in den Kontext.
+
+    Gibt Pfad + documentHash + Fence zurück; Basis für große lynx_patch-Pläne.
+    Erfordert gestopptes Playback; Snapshot max 64 MiB, 4 behaltene Snapshots."""
+    try:
+        project, meta = _lynx().project_read_full(
+            max_pages=max_pages, page_limit=65536)
+        _fence.observe_snapshot(meta)
+        OUT_DIR.mkdir(exist_ok=True)
+        path = OUT_DIR / f"snapshot-{meta['projectId']}-r{meta['revision']}.json"
+        path.write_text(json.dumps(project, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+        return {"path": str(path), "bytes": path.stat().st_size,
+                "documentHash": meta["documentHash"],
+                "revision": meta["revision"],
+                "hint": "Patch gegen dieses snapshot planen (lynx_patch)."}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool()
+def lynx_catalog(kind: str, offset: int = 0, limit: int | None = None) -> dict[str, Any]:
+    """Instrument-/Effekt-Kataloge (instrument.catalog | effect.catalog).
+
+    IDs sind opaque Strings ('lynx:gen:Kick', 'native:0', 'plugin:VST-…') und
+    werden channel.create / instrument.replace / effect.load übergeben.
+    Paginiert über offset; count = Gesamtzahl."""
+    op = {"instruments": "instrument.catalog", "effects": "effect.catalog"}.get(kind)
+    if op is None:
+        return {"error": "invalid", "detail": "kind: instruments|effects"}
+    return _read(op, _clean(offset=offset, limit=limit))
+
+
+@mcp.tool()
+def lynx_plugin_inspect(target: dict | None = None) -> dict[str, Any]:
+    """Hosted-Parameter lesend (plugin.inspect): ohne target alle Geräte,
+    mit target {kind:'instrument',channelIndex} oder
+    {kind:'effect',mixerIndex,effectIndex} die Parameter einzeln.
+
+    Werte sind normalisiert 0..1; displayValue/label nennen die Natubeinheiten.
+    target liefert exakt die Struktur für lynx_plugin_parameters."""
+    return _read("plugin.inspect", target and {"target": target} or {})
+
+
+# --- Dokument-Patch ----------------------------------------------------------------
+
+@mcp.tool()
+def lynx_patch(patch: list[dict]) -> dict[str, Any]:
+    """Atomare Projekt-Änderung via JSON Patch (RFC 6902, 1–128 Ops) = EIN Undo.
+
+    Nur test/add/replace/remove; Paths als JSON Pointer. Fence und
+    snapshotId/documentHash werden serverseitig aus dem letzten Vollread
+    gesetzt ( erst lynx_read scope=summary oder lynx_snapshot!).
+    Arrays/Referenzen sind literal — abhängige Indizes in derselben
+    Transaktion führen; für Struktur-Actions die typisierten Tools vorziehen.
+    Assets/Pfade/Plugin-States sind schreibgeschützt (Allowlist).
+    Nach Erfolg immer neu lesen."""
+    if not (1 <= len(patch) <= 128):
+        return {"error": "invalid", "detail": "patch braucht 1–128 Ops"}
+    return _write("project.edit", {"patch": patch}, snapshot=True)
+
+
+# --- Typisierte Schreib-Tools -------------------------------------------------------
+
+@mcp.tool()
+def lynx_tempo_set(bpm: float) -> dict[str, Any]:
+    """Song-Tempo in BPM setzen (tempo.set). Gleicher Wert = No-op ohne Undo."""
+    return _write("tempo.set", {"bpm": float(bpm)})
+
+
+@mcp.tool()
+def lynx_pattern_create(index: int | None = None, name: str | None = None,
+                        length_ticks: int | None = None) -> dict[str, Any]:
+    """Neues Pattern anlegen (pattern.create): append oder an index 0..count.
+
+    name defaultet auf 'Pattern N'; lengthTicks 0 = folgt den Notes.
+    Ergebnis: index/patternId/name/lengthTicks/patternCount — Index-Felder
+    für Folge-Tools liefern."""
+    return _write("pattern.create", _clean(index=index, name=name,
+                                           lengthTicks=length_ticks))
+
+
+@mcp.tool()
+def lynx_pattern_clone(index: int, name: str | None = None) -> dict[str, Any]:
+    """Kopie eines Patterns direkt danach (pattern.clone).
+
+    Notes, Expression, Events, Marker, Loops und Farbe bleiben erhalten;
+    neue Pattern-ID. Original existieren muss (index aus lynx_session)."""
+    return _write("pattern.clone", _clean(index=index, name=name))
+
+
+@mcp.tool()
+def lynx_pattern_set(index: int, name: str | None = None,
+                     length_ticks: int | None = None) -> dict[str, Any]:
+    """Name und/oder lengthTicks eines Patterns setzen (pattern.set).
+
+    lengthTicks: 0 (folgen den Notes) oder ganzzahlige Vielfache von Takten
+    (barTicks aus lynx_status × 1..999). No-op erzeugt kein Undo.
+    Löschen ist keine typisierte Op — dafür lynx_patch."""
+    return _write("pattern.set", _clean(index=index, name=name,
+                                        lengthTicks=length_ticks))
+
+
+@mcp.tool()
+def lynx_notes_replace(pattern_index: int | None = None, pattern_id: str | None = None,
+                       notes: list[dict] | None = None) -> dict[str, Any]:
+    """Notes eines Patterns VOLLSTÄNDIG ersetzen (pattern.replace_notes).
+
+    Vorbedingung aus der Doku: ZUERST alle Notes mit
+    lynx_read(scope=pattern_notes) leerend lesen und alle 18 Felder (auch
+    expression/chanceOne) übernehmen — sonst gehen MPE-Kurven verloren.
+    expression: {pitch|timbre|pressure: [[tick, wert], …}] alle drei Lanes
+    Pflicht (leeres Array = keine). > 2000 Notes: lieber lynx_patch."""
+    if not notes:
+        return {"error": "invalid", "detail": "notes (vollständige Liste) fehlt"}
+    if len(notes) > NOTE_WARN:
+        return {"error": "limit",
+                "detail": f"{len(notes)} Notes über Kontext-Richtwert {NOTE_WARN} — "
+                          "Einzelnutzung von lynx_patch empfohlen"}
+    return _write("pattern.replace_notes",
+                   _clean(index=pattern_index, patternId=pattern_id, notes=notes))
+
+
+@mcp.tool()
+def lynx_channel_create(instrument_id: str, name: str | None = None,
+                        mixer_index: int | None = None) -> dict[str, Any]:
+    """Neuen Channel mit Instrument anlegen (channel.create).
+
+    instrument_id aus lynx_catalog('instruments'). Name defaultet auf das
+    Instrument; mixer_index wählt den Mixer-Slot. Ergebnis: channelIndex +
+    mixerIndex — Basis für plugin-Parameter-Zugriffe."""
+    return _write("channel.create", _clean(instrumentId=instrument_id,
+                                           name=name, mixerIndex=mixer_index))
+
+
+@mcp.tool()
+def lynx_channel_set(index: int, name: str | None = None, volume: float | None = None,
+                     pan: float | None = None, muted: bool | None = None) -> dict[str, Any]:
+    """Channel-Eigenschaften setzen (channel.set): name/volume/pan/muted.
+
+    Mindestens ein Control; nicht Angegebenes bleibt. solo gibt es hier nicht
+    (nur im Mixer). volume 0..~1.26, pan -1..1 (normalisiert)."""
+    args = _clean(index=index, name=name, volume=volume, pan=pan, muted=muted)
+    if len(args) == 1:
+        return {"error": "invalid",
+                "detail": "Mindestens ein Control (name/volume/pan/muted) angeben."}
+    return _write("channel.set", args)
+
+
+@mcp.tool()
+def lynx_mixer_set(index: int, volume: float | None = None, pan: float | None = None,
+                   muted: bool | None = None, solo: bool | None = None) -> dict[str, Any]:
+    """Mixer-Track/Setzung steuern (mixer.set): volume/pan/muted/solo.
+
+    index aus lynx_session (mixer-Liste; 0 = Master). Mindestens ein Control."""
+    args = _clean(index=index, volume=volume, pan=pan, muted=muted, solo=solo)
+    if len(args) == 1:
+        return {"error": "invalid",
+                "detail": "Mindestens ein Control (volume/pan/muted/solo) angeben."}
+    return _write("mixer.set", args)
+
+
+@mcp.tool()
+def lynx_instrument_replace(channel_index: int, instrument_id: str) -> dict[str, Any]:
+    """Instrument eines Channels gegen frische Instanz tauschen
+    (instrument.replace). instrument_id aus lynx_catalog('instruments').
+    Opaque States des alten Geräts gehen bewusst verloren."""
+    return _write("instrument.replace",
+                  {"channelIndex": channel_index, "instrumentId": instrument_id})
+
+
+@mcp.tool()
+def lynx_effect_load(mixer_index: int, effect_id: str,
+                     effect_index: int | None = None) -> dict[str, Any]:
+    """Effekt auf einen Mixer-Track laden (effect.load).
+
+    effect_id aus lynx_catalog('effects'); effect_index = Position in der
+    Kette (append wenn weggelassen)."""
+    return _write("effect.load", _clean(mixerIndex=mixer_index,
+                                        effectId=effect_id,
+                                        effectIndex=effect_index))
+
+
+@mcp.tool()
+def lynx_effect_remove(mixer_index: int, effect_index: int) -> dict[str, Any]:
+    """Effekt aus der Kette eines Mixer-Tracks entfernen (effect.remove)."""
+    return _write("effect.remove", {"mixerIndex": mixer_index,
+                                    "effectIndex": effect_index})
+
+
+@mcp.tool()
+def lynx_plugin_parameters(target: dict, parameters: list[dict]) -> dict[str, Any]:
+    """Geräteparameter setzen (plugin.parameters_set), 1–64 pro Aufruf.
+
+    target: {kind:'instrument', channelIndex} oder
+            {kind:'effect', mixerIndex, effectIndex}  — exakt so, wie
+            lynx_plugin_inspect es liefert. Native Instrumente sind hier
+            ausgeschlossen (nur hosted + Mixer-Effekte).
+    parameters: [{index, value, expectedValue?}] mit value normalisiert 0..1;
+    expectedValue (aus plugin.inspect) = Guard gegen veraltete Vendor-Werte.
+    changed im Ergebnis = Anzahl gesetzter Parameter."""
+    if not (1 <= len(parameters) <= 64):
+        return {"error": "invalid", "detail": "parameters braucht 1–64 Einträge"}
+    kind = (target or {}).get("kind")
+    if kind not in ("instrument", "effect"):
+        return {"error": "invalid",
+                "detail": "target.kind muss 'instrument' oder 'effect' sein"}
+    return _write("plugin.parameters_set", {"target": target,
+                                            "parameters": parameters})
+
+
+@mcp.tool()
+def lynx_playlist_edit(edits: list[dict]) -> dict[str, Any]:
+    """Playlist/Arrangement bearbeiten (playlist.edit), 1–128 Edits.
+
+    Pro Edit: action 'add' (kind 'pattern'|'audio'|'automation', pattern/
+    channel/automation + track/start, optional length/offset/offsetFraction/
+    gain/pan/muted/fadeIn/fadeOut/reversed/pitch/stretch — clipId wird
+    zugewiesen), 'update' (clipId + Felder), 'duplicate' (clipId),
+    'remove' (clipId). Inhaltlich gesperrte Rows erst via
+    lynx_patch lockedToContent=false, dann editieren.
+    clipIds aus lynx_read(scope=playlist)."""
+    if not (1 <= len(edits) <= 128):
+        return {"error": "invalid", "detail": "edits braucht 1–128 Einträge"}
+    return _write("playlist.edit", {"edits": edits})
+
+
+# --- Transport & History --------------------------------------------------------
+
+@mcp.tool()
+def lynx_transport(action: str) -> dict[str, Any]:
+    """Playback starten/stoppen: action play|stop (transport.*).
+
+    play nutzt den aktuellen Song/Pattern-Modus; stop geht auch bei
+    veraltetem Fence (dokumentiert) und bricht Aufnahme ab."""
+    if action == "stop":
+        args = ({"expectedProjectId": _fence.state.project_id,
+                 "expectedEpoch": _fence.state.control_epoch,
+                 "expectedRevision": _fence.state.revision}
+                if _fence.state.fresh else {})
+        try:
+            result = _lynx().request("transport.stop", args)
+            _fence.observe(**{k2: result.get(k1) for k1, k2 in
+                              (("projectId", "project_id"),
+                               ("controlEpoch", "control_epoch"),
+                               ("revision", "revision"))})
+            return _cap(result)
+        except Exception as exc:
+            return _fail(exc)
+    if action == "play":
+        return _write("transport.play", {})
+    return {"error": "invalid", "detail": "action: play|stop"}
+
+
+@mcp.tool()
+def lynx_history(action: str, expected_device_state_hash: str | None = None) -> dict[str, Any]:
+    """Natives undo/redo (history.*), kein per-client-selektives Rücknehmen.
+
+    Ownership des obersten Schritts nötig — fremde UI-Schritte gehören dem
+    Nutzer. canUndo/canRedo aus lynx_session prüfen.
+    expectedDeviceStateHash (aus lynx_device_state): Guard gegen Restore nach
+    unrelated Opaque-Device-Änderungen."""
+    if action not in ("undo", "redo"):
+        return {"error": "invalid", "detail": "action: undo|redo"}
+    return _write(f"history.{action}",
+                  _clean(expectedDeviceStateHash=expected_device_state_hash))

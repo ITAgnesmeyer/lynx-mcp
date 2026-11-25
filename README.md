@@ -86,8 +86,25 @@ lynx-mcp [--discovery PFAD] {serve, probe}
 
 Der Test-Host hat eine eigene CLI: `python -m lynx_mcp.testhost {start,stop,status}`.
 
+## Tools (vollständige Remote-Control-Fläche)
+
+Alle 29 Ops des Builds `0.1.31.1` sind in 25 MCP-Tools abgebildet (live verifiziert):
+
+| Bereich | Tools |
+| --- | --- |
+| Observieren | `lynx_describe` · `lynx_status` · `lynx_session` · `lynx_changes` · `lynx_device_state` |
+| Lesen | `lynx_read` (scope `summary`/`pattern_notes`/`playlist`/`session`) · `lynx_snapshot` (JSON auf Disk) · `lynx_catalog` (instruments/effects) · `lynx_plugin_inspect` |
+| Dokument | `lynx_patch` (JSON Patch, 1–128 Ops = 1 Undo) |
+| Typisierte Writes | `lynx_tempo_set` · `lynx_pattern_create` / `_clone` / `_set` · `lynx_notes_replace` · `lynx_channel_create` / `_set` · `lynx_mixer_set` · `lynx_instrument_replace` · `lynx_effect_load` / `_remove` · `lynx_plugin_parameters` · `lynx_playlist_edit` |
+| Transport/Historie | `lynx_transport` (play/stop) · `lynx_history` (undo/redo) |
+
+Das Fence-Tripel (`expectedProjectId`/`expectedEpoch`/`expectedRevision`) setzt der
+Server **selbst** aus dem zuletzt beobachteten Read — Write-Tools brauchen es nie
+als Argument, und kein Write geht ohne vorherigen Read raus (Guard-Fehler
+`stale_fence`).
+
 ## Status
 
-Frühes Projekt nach den Meilensteinen in [PLAN.md](PLAN.md) (M0–M6):
-Repo-Skelett steht; Client-Handshake (M1), Read-Pipeline (M2), MCP-Tools
-(M3–M5) sind partiell als Stubs angelegt.
+Frühes Projekt nach den Meilensteinen in [PLAN.md](PLAN.md) (M0–M6): M0–M3 sind
+fertig und live verifiziert, M4/M5 stehen als Tools bereit (Mock-getestet;
+live bisher nur Reads + No-op). Offene Punkte siehe PLAN.md §5.
