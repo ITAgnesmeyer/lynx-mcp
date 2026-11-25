@@ -283,3 +283,74 @@ def test_export_timeout_is_uncertain(mock, tmp_path, monkeypatch):
     mock.respond("project.read", make_read_pages(doc, page_size=64))
     r = server.lynx_export("ogg")
     assert r["error"] == "timeout" and r["uncertain"] is True
+
+
+# --- lynx_export: Bereichs-Export (Selection als Snapshot-Schnitt) -------------
+
+def test_export_range_crops_snapshot(mock, tmp_path, monkeypatch):
+    _export_env(tmp_path, monkeypatch)
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen["project"] = json.loads(Path(args[2]).read_text(encoding="utf-8"))
+        out = Path(args[3])
+        out.write_bytes(b"RIFF-dummy")
+        Path(str(out) + ".txt").write_text(
+            "peak=0.5\nsong_seconds=4.6\nresult=OK\n", encoding="utf-8")
+        return _Proc(0)
+
+    monkeypatch.setattr(server.subprocess, "run", _export_only(fake_run))
+    doc = json.dumps({
+        "bpm": 130.0,
+        "playlist": [
+            [0, 0, 0, 526850, 0, 1, 5],      # audio: ueber beide Raender
+            [1, 5, 2000, 1000, 0, 0, 0],     # pattern: ganz im Bereich
+            [0, 1, 9000, 500, 0, 0, 0],      # pattern: hinter end
+            [0, 2, 500, 700, 0, 0, 0],       # audio: ueber start
+        ],
+        "automations": [{"name": "A", "points": [[0, 0.5], [1500, 0.7],
+                                                 [8000, 0.2]]}],
+    }).encode()
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav", start_ticks=1000, end_ticks=5000)
+    assert r["ok"] is True and r["range"] == [1000, 5000]
+    assert "1000x5000" in r["file"]
+    pl = seen["project"]["playlist"]
+    assert pl[0] == [0, 0, 0, 4000, 1000, 1, 5]          # gekuerzt, offset folgt
+    assert pl[1] == [1, 5, 1000, 1000, 0, 0, 0]          # nach vorn geschoben
+    assert pl[2] == [0, 2, 0, 200, 500, 0, 0]            # Vorderkante beschnitten
+    assert seen["project"]["automations"][0]["points"] == [[500, 0.7]]
+
+
+def test_export_range_start_only(mock, tmp_path, monkeypatch):
+    _export_env(tmp_path, monkeypatch)
+
+    def fake_run(args, **kw):
+        out = Path(args[3])
+        out.write_bytes(b"RIFF-dummy")
+        Path(str(out) + ".txt").write_text("peak=0.5\nresult=OK\n",
+                                          encoding="utf-8")
+        return _Proc(0)
+
+    monkeypatch.setattr(server.subprocess, "run", _export_only(fake_run))
+    doc = json.dumps({"playlist": [[0, 0, 1000, 500, 0, 0, 0]]}).encode()
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav", start_ticks=1200)
+    assert r["ok"] is True and r["range"] == [1200, None]
+    assert r["seconds"] == 0.5 or r["seconds"] is None   # Report ohne song_seconds
+
+
+def test_export_empty_range_needs_no_process(mock, tmp_path, monkeypatch):
+    _export_env(tmp_path, monkeypatch)
+    ran = []
+    monkeypatch.setattr(server.subprocess, "run",
+                        _export_only(lambda a, **kw: ran.append(a) or _Proc(0)))
+    doc = json.dumps({"playlist": [[0, 0, 0, 500, 0, 0, 0]]}).encode()
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav", start_ticks=10000, end_ticks=20000)
+    assert r["error"] == "empty_range" and ran == []
+
+
+def test_export_range_validation_before_io(mock):
+    r = server.lynx_export("wav", start_ticks=5000, end_ticks=5000)
+    assert r["error"] == "invalid" and mock.requests == []

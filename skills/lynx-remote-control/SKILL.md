@@ -110,6 +110,15 @@ lynx_export format=wav            # project.read -> .lynx -> LYNX.exe --export
 UI-Arbeit ist ok; nur playback muss stehen). Formate: wav/flac/aif/mp3/
 ogg/m4a. Voraussetzung: `LYNX.exe` auffindbar (Env `LYNX_EXE`).
 
+**Bereich exportieren** (LYNX' Selection ist headless nicht erreichbar):
+einfach `start_ticks`/`end_ticks` (PPQ 960, Takt 4/4 = 3840) mitgeben —
+der Schnitt sitzt im Snapshot, die Instanz bleibt unberührt:
+
+```
+lynx_export format=wav end_ticks=30720   # nur die ersten 8 Takte
+lynx_export format=wav start_ticks=61440 # ab Takt 16 bis Song-Ende
+```
+
 **Projekt wechseln** geht nur über Neustart:
 
 ```

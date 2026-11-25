@@ -532,9 +532,90 @@ def _num(s: str | None) -> float | None:
         return None
 
 
+def _clip_crop(c: list, start: int, end: int | None) -> list | None:
+    """Ein Playlist-Clip [pattern, track, start, length, offset, kind, quelle, …]
+    auf den Bereich [start, end) schneiden; None = fällt ganz raus, [] = leer.
+    Offset und Länge folgen dem Schnitt (audio/pattern/automation gleicher
+    Ticker-Wert), wie LYNX' makeRenderSong es bei einer Selection tut."""
+    if len(c) < 7 or not all(isinstance(c[i], int) for i in (2, 3, 4)):
+        return None
+    s, length, off = c[2], c[3], c[4]
+    if length <= 0 or s + length <= start or (end is not None and s >= end):
+        return []
+    if s < start:
+        off += start - s
+        length -= start - s
+        s = start
+    if end is not None and s + length > end:
+        length = end - s
+    c = list(c)
+    c[2], c[3], c[4] = s - start, length, off
+    return c
+
+
+def _clips_crop(items: list, start: int, end: int | None) -> list | None:
+    """Clip-Liste schneiden; None, wenn ein Eintrag unerwartet geformt ist."""
+    out = []
+    for c in items:
+        if not isinstance(c, list):
+            return None
+        r = _clip_crop(c, start, end)
+        if r is None:
+            return None
+        if r:
+            out.append(r)
+    return out
+
+
+def _crop_project(project: dict, start: int, end: int | None) -> tuple[
+        dict, int | None]:
+    """Snapshot-Dokument auf [start, end) beschneiden (PPQ 960). Liefert die
+    beschnittene Kopie und die Zahl der Clips, die im Bereich übrig blieben
+    (None = Dokumentform unbekannt → lieber unbeschnitten durchreichen)."""
+    pl = project.get("playlist")
+    if not isinstance(pl, list):
+        return project, None
+    clips = _clips_crop(pl, start, end)
+    if clips is None:
+        return project, None
+    out = dict(project)
+    out["playlist"] = clips
+    arrs = project.get("arrangements")
+    if isinstance(arrs, list):  # andere Arrangements mit Clips ebenso
+        new_arrs = []
+        for a in arrs:
+            if isinstance(a, dict) and isinstance(a.get("clips"), list):
+                ac = _clips_crop(a["clips"], start, end)
+                if ac is None:
+                    return project, None
+                a = dict(a, clips=ac)
+            new_arrs.append(a)
+        out["arrangements"] = new_arrs
+    autos = project.get("automations")
+    if isinstance(autos, list) and (start or end is not None):
+        new_autos = []
+        for a in autos:  # Punkte: vor/nach dem Bereich fort, Ticks relativieren
+            if isinstance(a, dict) and isinstance(a.get("points"), list):
+                pts = []
+                for pt in a["points"]:
+                    if (isinstance(pt, list) and pt
+                            and isinstance(pt[0], (int, float))):
+                        if pt[0] < start or (end is not None
+                                             and pt[0] > end):
+                            continue  # (keine Rand-Interpolation, s. Docstring)
+                        pt = list(pt)
+                        pt[0] -= start
+                    pts.append(pt)
+                a = dict(a, points=pts)
+            new_autos.append(a)
+        out["automations"] = new_autos
+    return out, len(clips)
+
+
 @mcp.tool()
 def lynx_export(format: str = "wav", sample_rate: int | None = None,
-                timeout_s: int = 120) -> dict[str, Any]:
+                timeout_s: int = 120, start_ticks: int | None = None,
+                end_ticks: int | None = None) -> dict[str, Any]:
     """Aktuelle Session offline zu Audio rendern (lynx_export).
 
     Kette: project.read (Vollread) -> natives .lynx im Snapshot-Ordner ->
@@ -546,12 +627,22 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
     LYNX_EXE, sonst Installationsuche. Ein Timeout bricht den Exportprozess
     ab — Ausgabedatei kann unvollständig sein, dann prüfen (lynx_status,
     Datei-Größe), niemals blind wiederholen. Stummer Render gilt als
-    Fehler (silent:true mit Grund), die WAV-Datei existiert trotzdem."""
+    Fehler (silent:true mit Grund), die WAV-Datei existiert trotzdem.
+    start_ticks/end_ticks (PPQ 960, 1 Takt 4/4 = 3840) exportieren nur
+    diesen Bereich: Der Schnitt liegt im Snapshot (Playlist-Clips,
+    Arrangements, Automations-Punkte — ohne Rand-Interpolation), die
+    Instanz und ihre Selection bleiben unberührt; ohne end_ticks bis
+    Song-Ende. Leerer Bereich → empty_range, kein Exportprozess."""
     if format not in EXPORT_FORMATS:
         return {"error": "invalid",
                 "detail": f"format: {'|'.join(EXPORT_FORMATS)}"}
     if sample_rate is not None and not 8000 <= int(sample_rate) <= 384000:
         return {"error": "invalid", "detail": "sample_rate 8000..384000"}
+    start = int(start_ticks or 0)
+    end = None if end_ticks is None else int(end_ticks)
+    if start < 0 or (end is not None and end <= start):
+        return {"error": "invalid",
+                "detail": "start_ticks >= 0, end_ticks > start_ticks"}
     timeout_s = max(5, min(int(timeout_s), EXPORT_TIMEOUT_MAX))
     try:
         project, meta = _lynx().project_read_full(
@@ -559,6 +650,15 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
     except Exception as exc:
         return _fail(exc)
     _fence.observe_snapshot(meta)
+    if start or end is not None:
+        project, left = _crop_project(project, start, end)
+        if left == 0:
+            return {"error": "empty_range", "range": [start, end],
+                    "detail": "im Bereich liegt kein Clip — Selection zu "
+                              "weit vorn/hinten? (Clips: lynx_read "
+                              "scope=playlist)"}
+    else:
+        left = None
     exe = testhost._exe_path()
     if exe is None or not exe.is_file():
         return {"error": "no_exe",
@@ -568,6 +668,8 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
     odir = out_dir()
     odir.mkdir(parents=True, exist_ok=True)
     stem = f"export-{meta['projectId']}-r{meta['revision']}"
+    if start or end is not None:
+        stem += f"-{start}x{end if end is not None else 'e'}"
     proj_file = odir / (stem + ".lynx")
     proj_file.write_text(json.dumps(project, ensure_ascii=False),
                          encoding="utf-8")
@@ -598,6 +700,11 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
                          "bytes": out.stat().st_size if exists else 0,
                          "seconds": _num(report.get("song_seconds")),
                          "peak": _num(report.get("peak"))}
+    if start or end is not None:
+        r["range"] = [start, end]
+        if left is None:
+            r["range_note"] = ("Playlist-Form unbekannt — Bereich wurde "
+                               "nicht beschnitten, ganzer Song gerendert")
     if not ok:
         r["detail"] = (result.removeprefix("ERROR ").strip()
                        or f"LYNX.exe exit {proc.returncode}")

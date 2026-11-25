@@ -146,6 +146,14 @@ Installationssuche — wie beim Test-Host). Ein stiller Render gilt als Fehler
 bricht den Exportprozess ab und meldet `uncertain` (Datei teilgeschrieben),
 also nicht blind wiederholen.
 
+**Bereichs-Export:** LYNX' Selection (Loop-Region) ist im headless Export
+nicht erreichbar — `lynx_export` schneidet den Wunschbereich deshalb im
+Snapshot zu: `start_ticks`/`end_ticks` (PPQ 960, 1 Takt 4/4 = 3840) kürzen
+Playlist-Clips, Arrangements und Automations-Punkte des geschriebenen
+`.lynx`, die laufende Instanz und ihre Selection bleiben unberührt
+(`end_ticks` offen = bis Song-Ende; leerer Bereich → `empty_range` ohne
+Exportprozess).
+
 **Herkommen von Audio geht umgekehrt nicht über die API**: Neue Sample-/
 Asset-Pfade sind in `project.edit` allowlist-seitig gesperrt („cannot
 introduce new sample/zone paths") — Imports bleiben der UI vorbehalten;
