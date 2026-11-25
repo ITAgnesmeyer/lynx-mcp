@@ -69,6 +69,7 @@ Pattern-ID statt Index verwenden, wenn zwischen Read und Write andere
 ```
 lynx_transport action=stop
 lynx_snapshot                       # Komplettes JSON auf Disk, Pfad merken
+                                    # (mit out_dir=… direkt im Zielordner)
 → Patch gegen diese Datei entwerfen (lynx_patch akzeptiert 1–128 RFC6902-Ops,
   test/add/replace/remove; Arrays/Indizes in derselben Transaktion führen)
 lynx_patch patch=[…]                # EIN Undo-Schritt

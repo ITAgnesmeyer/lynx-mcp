@@ -652,7 +652,7 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
                 filename: str | None = None) -> dict[str, Any]:
     """Aktuelle Session offline zu Audio rendern (lynx_export).
 
-    Kette: project.read (Vollread) -> natives .lynx im Snapshot-Ordner ->
+    Kette: project.read (Vollread) -> natives .lynx im Arbeitsordner ->
     LYNX.exe --export als neuer, fensterloser Prozess. Die laufende Instanz
     wird nicht geändert (der Export-Zweig verlässt LYNX' initialise vor dem
     Remote-Control-Listener); nur der Read verlangt gestopptes Playback.
@@ -668,7 +668,7 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
     Instanz und ihre Selection bleiben unberührt; ohne end_ticks bis
     Song-Ende. Leerer Bereich → empty_range, kein Exportprozess.
     out_dir (absolut, ~ erlaubt) schreibt das Audio in diesen Ordner statt
-    in den Standard-Snapshot-Ordner — Pfad richtliniengreifbar statt
+    in den Standard-Arbeitsordner — Pfad richtliniengreifbar statt
     festgeschrieben; filename setzt den Namen (ohne Pfad/Endung). Nur das
     Audio landet dort, Arbeitsdateien bleiben im Arbeitsordner."""
     if format not in EXPORT_FORMATS:

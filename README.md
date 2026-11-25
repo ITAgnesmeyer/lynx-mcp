@@ -87,8 +87,11 @@ uv run python -m lynx_mcp.testhost stop          # nur die von testhost gestarte
   (`%LOCALAPPDATA%\Programs\LYNX`, `%ProgramFiles%\LYNX`). Bei **portabler**
   Installation (kein Standardort) genügt `setx LYNX_EXE "D:\pfad\zu\LYNX.exe"`.
   Eine Projektdatei lässt sich optional mit `--projekt` übergeben.
-- Snapshots (`lynx_snapshot`) landen im Quellen-Checkout unter `out/`, sonst
-  unter `%LOCALAPPDATA%\lynx-mcp\out` — mit Env `LYNX_MCP_OUT_DIR` frei wählbar.
+- Snapshots (`lynx_snapshot`) und Export-Arbeitsdateien landen im Quellen-Checkout
+  unter `out/`, sonst unter `%LOCALAPPDATA%\lynx-mcp\out` — mit Env
+  `LYNX_MCP_OUT_DIR` frei wählbar; als Werkzeug des Agenten wichtiger: beide
+  Tools nehmen ein explizites `out_dir` (absolut), damit Pfad-Richtlinien am
+  Parameter greifen und nicht an einer versteckten Voreinstellung.
 - `stop` beendet ausschließlich Instanzen, die testhost selbst gestartet hat
   (PID-State-Datei + Bildnamen-Prüfung gegen PID-Wiederverwendung).
 - Verwaiste Discovery-Dateien (LYNX ohne Bereinigung beendet) erkennen
@@ -114,11 +117,11 @@ LYNX.exe (kein Op, aber aus der API sauber ableitbar, s. unten):
 | Bereich | Tools |
 | --- | --- |
 | Observieren | `lynx_describe` · `lynx_status` · `lynx_session` · `lynx_changes` · `lynx_device_state` |
-| Lesen | `lynx_read` (scope `summary`/`pattern_notes`/`playlist`/`session`) · `lynx_snapshot` (JSON auf Disk) · `lynx_catalog` (instruments/effects) · `lynx_plugin_inspect` |
+| Lesen | `lynx_read` (scope `summary`/`pattern_notes`/`playlist`/`session`) · `lynx_snapshot` (JSON auf Disk, `out_dir`-Parameter) · `lynx_catalog` (instruments/effects) · `lynx_plugin_inspect` |
 | Dokument | `lynx_patch` (JSON Patch, 1–128 Ops = 1 Undo) |
 | Typisierte Writes | `lynx_tempo_set` · `lynx_pattern_create` / `_clone` / `_set` · `lynx_notes_replace` · `lynx_channel_create` / `_set` · `lynx_mixer_set` · `lynx_instrument_replace` · `lynx_effect_load` / `_remove` · `lynx_plugin_parameters` · `lynx_playlist_edit` |
 | Transport/Historie | `lynx_transport` (play/stop) · `lynx_history` (undo/redo) |
-| Export | `lynx_export` (Audio-Render: wav/flac/ogg/mp3/aif/m4a) |
+| Export | `lynx_export` (Audio-Render: wav/flac/ogg/mp3/aif/m4a; `start_ticks`/`end_ticks` als Bereich, `out_dir`/`filename` als Ziel) |
 
 Das Fence-Tripel (`expectedProjectId`/`expectedEpoch`/`expectedRevision`) setzt der
 Server **selbst** aus dem zuletzt beobachteten Read — Write-Tools brauchen es nie
@@ -132,7 +135,7 @@ einen fensterlosen Export-Modus mit (`LYNX.exe --export <in> <out>`).
 `lynx_export` verkettet beides sicher:
 
 1. **Vollread** der laufenden Session (`project.read`, verlangt gestopptes
-   Playback) → natives Projekt-JSON (`.lynx`) im Snapshot-Ordner,
+   Playback) → natives Projekt-JSON (`.lynx`) im Arbeitsordner,
 2. **neuer LYNX-Prozess** rendert daraus WAV (24 bit), FLAC, OGG, MP3
    (320 kbit/s), AIFF oder M4A/AAC — die laufende Instanz wird dabei nicht
    angefasst (der Export-Zweig verlässt LYNX' `initialise`, bevor der

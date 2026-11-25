@@ -92,7 +92,7 @@ Headless-Schiene `project.read` → natives `.lynx` → `LYNX.exe --export`
 | `lynx_changes` | `changes` | max 128; `gap` → Vollread-Hinweis, Fence stale |
 | `lynx_device_state` | `device.state` | `deviceStateHash` only |
 | `lynx_read` | `project.read`/`pattern.notes`/`playlist.inspect`/`session.inspect` | `scope: summary\|pattern_notes\|playlist\|session`; Paging über `offset`/`limit` |
-| `lynx_snapshot` | `project.read` | kompletter Snapshot auf Disk (Env `LYNX_MCP_OUT_DIR`, sonst `out/` bzw. `%LOCALAPPDATA%\lynx-mcp\out`), Pfad + `documentHash` |
+| `lynx_snapshot` | `project.read` | kompletter Snapshot auf Disk (Standard: Env `LYNX_MCP_OUT_DIR`, sonst `out/` bzw. `%LOCALAPPDATA%\lynx-mcp\out`; `out_dir`-Parameter hat Vorrang), Pfad + `documentHash` |
 | `lynx_catalog` | `instrument.catalog` / `effect.catalog` | Paginiert über `offset`; IDs sind opaque Strings |
 | `lynx_plugin_inspect` | `plugin.inspect` | mit/ohne `target`; Parameterwerte normalisiert 0..1 |
 | `lynx_patch` | `project.edit` | JSON Patch 1–128 = 1 Undo; braucht frischen Snapshot |
@@ -173,8 +173,10 @@ zu wählen, z. B. `D:\projects\lynx-mcp\`):
     server.py             (MCP-Tools, v1-Menge aus §3)
     testhost.py           (Test-Host: LYNX.exe via LYNX_CONTROL_ENABLED=1
                            starten/beenden, PID-State + Discovery-Wait)
-  out/                    (von `lynx_snapshot` beschriebene Projekt-JSONs; Ort: Env
-                          `LYNX_MCP_OUT_DIR`, sonst `%LOCALAPPDATA%\lynx-mcp\out`)
+  out/                    (Arbeitsdateien von lynx_snapshot/lynx_export: Snapshots,
+                           beschnittene .lynx, Render-Reports; Standardort, Env
+                           `LYNX_MCP_OUT_DIR` oder %LOCALAPPDATA% bei uvx-Läufen;
+                           Zielort je Aufruf: out_dir-Parameter)
   tests/                  (Mock-Listener: Handshake + canned Ops gegen client.py)
   skills/lynx-remote-control/SKILL.md
                           (optionales Workflow-Skill für Skill-fähige Clients;
