@@ -108,3 +108,9 @@ als Argument, und kein Write geht ohne vorherigen Read raus (Guard-Fehler
 Frühes Projekt nach den Meilensteinen in [PLAN.md](PLAN.md) (M0–M6): M0–M3 sind
 fertig und live verifiziert, M4/M5 stehen als Tools bereit (Mock-getestet;
 live bisher nur Reads + No-op). Offene Punkte siehe PLAN.md §5.
+
+## Lizenz
+
+MIT ([LICENSE](LICENSE)). Die Lizenzen der eingebundenen Drittkomponenten —
+inklusive Hinweis auf LYNX SHARE (AGPL-3.0, nicht enthalten, nur API-Fernnutzung) —
+stehen in [THIRD_PARTY.md](THIRD_PARTY.md).
