@@ -8,8 +8,9 @@ version = "0.0.1"
 description = "MCP-Server (stdio) für die lokale lynx-control/1-API einer laufenden LYNX-SHARE-Instanz."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "LYNX-MCP contributors" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "ITAgnesmeyer", email = "info@itagnesmeyer.de" }]
 keywords = ["mcp", "model-context-protocol", "lynx", "share", "audio", "automation"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
