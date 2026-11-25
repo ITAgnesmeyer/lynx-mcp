@@ -37,3 +37,16 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["lynx_mcp"]
+
+[tool.ruff.lint.per-file-ignores]
+# Bewusste Designgrenze: in server.py wird jede Exception zu einem lesbaren
+# Tool-Fehler gemappt (_fail) — BLE001 wäre dort ein Fehlalarm. Der Mock-
+# Listener schluckt Client-Abbrüche absichtlich klanglos (Test-Hygiene).
+"lynx_mcp/server.py" = ["BLE001"]
+"tests/mock_lynx.py" = ["BLE001", "S110"]
+
+[tool.pyright]
+include = ["lynx_mcp", "tests"]
+pythonVersion = "3.10"
+venvPath = "."
+venv = ".venv"

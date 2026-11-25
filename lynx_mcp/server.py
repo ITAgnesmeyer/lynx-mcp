@@ -92,10 +92,9 @@ def _read(op: str, args: dict | None = None) -> Any:
     """
     try:
         result = _lynx().request(op, args)
-        _fence.observe(**{
-            "project_id": result.get("projectId"),
-            "control_epoch": result.get("controlEpoch"),
-            "revision": result.get("revision")})
+        _fence.observe(project_id=result.get("projectId"),
+                       control_epoch=result.get("controlEpoch"),
+                       revision=result.get("revision"))
         return _cap(result)
     except Exception as exc:
         return _fail(exc)
@@ -119,10 +118,9 @@ def _write(op: str, args: dict, snapshot: bool = False) -> Any:
                                   "zuerst lynx_read scope=summary oder lynx_snapshot."}
             guarded.update(snap)
         result = _lynx().request(op, guarded)
-        _fence.observe(**{
-            "project_id": result.get("projectId"),
-            "control_epoch": result.get("controlEpoch"),
-            "revision": result.get("revision")})
+        _fence.observe(project_id=result.get("projectId"),
+                       control_epoch=result.get("controlEpoch"),
+                       revision=result.get("revision"))
         # Snapshots sind nach jedem Write verbraucht (jede Change-Transaktion
         # invalidiert alte Snapshots); observe() ignoriert None, also explizit.
         _fence.state.snapshot_id = None
@@ -526,9 +524,11 @@ EXPORT_TIMEOUT_MAX = 600
 
 
 def _num(s: str | None) -> float | None:
+    if not s:
+        return None
     try:
         return float(s)
-    except (TypeError, ValueError):
+    except ValueError:
         return None
 
 
@@ -577,7 +577,8 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
         args += ["--rate", str(int(sample_rate))]
     try:
         proc = subprocess.run(args, capture_output=True, text=True,
-                              timeout=timeout_s, cwd=str(exe.parent))
+                              timeout=timeout_s, cwd=str(exe.parent),
+                              check=False)  # returncode wird selbst bewertet
     except subprocess.TimeoutExpired:
         return {"error": "timeout", "uncertain": True,
                 "detail": f"Exportprozess nach {timeout_s}s abgebrochen — "

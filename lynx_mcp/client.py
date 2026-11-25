@@ -238,7 +238,6 @@ class LynxClient:
         chunks = [base64.b64decode(first["data"])]
         snapshot_id = first["snapshotId"]
         doc_hash = first["documentHash"]
-        offset = int(first.get("offset", 0)) + len(chunks[-1])
         total = int(first["totalBytes"])
         pages = 1
         while first.get("nextOffset") is not None:
@@ -250,7 +249,6 @@ class LynxClient:
                 "snapshotId": snapshot_id, "expectedDocumentHash": doc_hash,
                 "offset": int(first["nextOffset"]), "limit": page_limit})
             chunks.append(base64.b64decode(first["data"]))
-            offset = int(first["offset"]) + len(chunks[-1])
             pages += 1
         blob = b"".join(chunks)
         if len(blob) != total or total > DOC_MAX_BYTES:
@@ -286,7 +284,7 @@ def _recv_line(sock: socket.socket, max_frame: int, max_depth: int) -> dict:
             raise ProtocolError("Verbindung vor Frame-Ende geschlossen")
         buf.extend(b)
         if b"\n" in buf:
-            line, _, rest = buf.partition(b"\n")
+            _, _, rest = buf.partition(b"\n")
             if rest:
                 raise ProtocolError("mehr als ein Frame pro Verbindung empfangen")
             break

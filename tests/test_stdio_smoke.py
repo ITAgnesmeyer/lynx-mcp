@@ -74,7 +74,8 @@ def test_stdio_handshake_and_tools(tmp_path):
         payload = call["result"]["structuredContent"]
         assert payload.get("error") in {"not_implemented", "not_running"}
     finally:
-        proc.stdin.close()
+        if proc.stdin is not None:
+            proc.stdin.close()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:  # pragma: no cover

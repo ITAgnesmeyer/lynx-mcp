@@ -29,7 +29,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from . import client
 
@@ -99,7 +99,7 @@ def _process_image(pid: int) -> str | None:
     return client.process_image(pid)
 
 
-def _is_our_instance(state: dict[str, Any] | None) -> bool:
+def _is_our_instance(state: dict[str, Any] | None) -> TypeGuard[dict[str, Any]]:
     """Living proof: aufzeichnete PID läuft noch UND ist dasselbe LYNX.exe."""
     if not state or not state.get("pid"):
         return False

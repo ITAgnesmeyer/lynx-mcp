@@ -15,8 +15,9 @@ import os
 import secrets
 import socket
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 PROTOCOL = "lynx-control/1"
 
@@ -59,7 +60,7 @@ class MockLynx(threading.Thread):
         while not self._stop.is_set():
             try:
                 conn, _ = self.server.accept()
-            except socket.timeout:
+            except TimeoutError:  # socket.timeout ist seit 3.10 Alias davon
                 continue
             except OSError:
                 break

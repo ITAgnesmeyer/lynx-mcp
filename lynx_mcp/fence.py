@@ -11,7 +11,7 @@ Regeln aus PLAN.md §2/§4:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -90,11 +90,11 @@ class Fence:
 
     def fence_params(self) -> dict[str, int | str]:
         """Fence-Felder für eine Write-Op; nur aufrufen nach require_fresh()."""
-        return {
-            "projectId": self.state.project_id,
-            "controlEpoch": self.state.control_epoch,
-            "revision": self.state.revision,
-        }
+        pid, epoch, rev = (self.state.project_id, self.state.control_epoch,
+                           self.state.revision)
+        assert pid is not None and epoch is not None and rev is not None
+        # require_fresh() garantiert das — sonst käme stale_fence
+        return {"projectId": pid, "controlEpoch": epoch, "revision": rev}
 
 
 class StaleFenceError(RuntimeError):

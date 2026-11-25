@@ -3,8 +3,6 @@
 Mock-Listener für Handshake/Ops folgen in M1 (§6: tests/).
 """
 
-from pathlib import Path
-
 import lynx_mcp
 from lynx_mcp import client, fence
 
