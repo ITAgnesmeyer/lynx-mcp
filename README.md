@@ -69,8 +69,9 @@ uv run python -m lynx_mcp.testhost stop          # nur die von testhost gestarte
 
 - **Keine festen Pfade:** `LYNX.exe` wird über Env `LYNX_EXE` (oder `--exe`)
   gesetzt; ohne Angabe sucht testhost nur die üblichen Installationsorte
-  (`%LOCALAPPDATA%\Programs\LYNX`, `%ProgramFiles%\LYNX`). Eine Projektdatei
-  lässt sich optional mit `--projekt` übergeben.
+  (`%LOCALAPPDATA%\Programs\LYNX`, `%ProgramFiles%\LYNX`). Bei **portabler**
+  Installation (kein Standardort) genügt `setx LYNX_EXE "D:\pfad\zu\LYNX.exe"`.
+  Eine Projektdatei lässt sich optional mit `--projekt` übergeben.
 - Snapshots (`lynx_snapshot`) landen im Quellen-Checkout unter `out/`, sonst
   unter `%LOCALAPPDATA%\lynx-mcp\out` — mit Env `LYNX_MCP_OUT_DIR` frei wählbar.
 - `stop` beendet ausschließlich Instanzen, die testhost selbst gestartet hat
