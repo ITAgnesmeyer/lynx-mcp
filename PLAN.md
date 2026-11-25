@@ -1,3 +1,7 @@
+> Übernommen gemäß §0 aus dem Ursprungsdocument (`plan.md`, originally under
+> `D:\audacity\LYNX\MCP`); Pflege ab jetzt hier. Tippfehler/Enkodierungsartefakte
+> berichtigt, inhaltlich unverändert.
+
 # Plan: LYNX Remote Control → MCP-Server (`lynx-mcp`)
 
 Ziel: Ein MCP-Server (Model Context Protocol, stdio), der die lokale `lynx-control/1`-API
@@ -33,8 +37,8 @@ Bezugsquellen (Stand 2026-11):
 
 | Thema | Entscheidung | Begründung |
 |---|---|---|
-| Sprache/Laufzeit | Python ≥ 3.10, offizielles `mcp`-SDK (`mcp[cli]`) | Der Referenz-Client ist Python/Stdlib; Handshake, Paging und Fence-Logik werden direkt übernommen |
-| Transport | MCP über **stdio** | Kein额外 Netzwerk-Listener; der einzige TCP-Socket bleibt LYNX' Loopback-Listener |
+| Sprache/Laufzeit | Python ≥ 3.10, offizielles `mcp`-SDK (umgesetzt mit v2-API: `MCPServer` ab `mcp>=2.3`) | Der Referenz-Client ist Python/Stdlib; Handshake, Paging und Fence-Logik werden direkt übernommen |
+| Transport | MCP über **stdio** | Kein zusätzlicher Netzwerk-Listener; der einzige TCP-Socket bleibt LYNX' Loopback-Listener |
 | Token-Handling | Token wird **nur im Serverprozess** gelesen, taucht in keiner Tool-Ausgabe, keinem Log, keinem Schema auf | Vorgabe aus REMOTE_CONTROL.md: „Never put it in a command argument, log, model prompt or request" |
 | Tool-Granularität | Typisierte Tools für die häufigsten Ops + **ein** generisches Patch-Tool | Typisierte Ops (`pattern.*`) erledigen natives Referenz-Remapping korrekt; `project.edit` bleibt als Fluchttür |
 | Passthrough-Tool `lynx_op`? | **Nein** (initial) | Würde Frames/Größenlimits und Token-Leaks unnötig dem Modell überlassen; `api.describe` liefert die Ops-Liste stattdessen an `lynx_describe` |
@@ -76,7 +80,7 @@ Module:
 
 | Tool | Parameter | Wrapper um | Bemerkung |
 |---|---|---|---|
-| `lynx_describe` | – | `api.describe` |返回列表 der vom Build unterstützten Ops/Capabilities; Tools daraus dynamisch annotieren |
+| `lynx_describe` | – | `api.describe` | Liste der vom Build unterstützten Ops/Capabilities zurück; Tools daraus dynamisch annotieren |
 | `lynx_status` | – | `status` | Identität, `revision`, Tempo, Meter, Transport, Position, Pattern, Counts |
 | `lynx_changes` | `fromRevision`, `limit?` | `changes` | max 128; `gap` → Hinweis „Vollread nötig" |
 | `lynx_read` | `scope: summary\|pattern_notes\|playlist\|session`, `patternIndex?`, `offset?/cursor?` | `project.read` (Paging) / `pattern.notes` / `playlist.inspect` / `session.inspect` | `summary` ist Default; Rohe Voll-JSON-Seiten nur auf expliziten Wunsch |
@@ -170,7 +174,7 @@ MCP-Client-Konfiguration (Beispiel, OpenCode/`config.json`-Syntax):
 
 ## 8. Nicht-Ziele (v1)
 
-- Keinownes HTTP-/WebSocket-Listening des MCP-Servers (nur LYNX' Loopback)
+- Kein eigenes HTTP-/WebSocket-Listening des MCP-Servers (nur LYNX' Loopback)
 - Kein Skripten von außen (pocketpy ist nicht Teil der Remote-API)
 - Kein Asset-Import, kein Render/Speichern per API (Protokoll kann das nicht)
 - Keine UI-Automatisierung (`ui.*`) außer im dokumentierten Demo-Modus
