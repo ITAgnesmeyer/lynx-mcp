@@ -76,10 +76,13 @@ Module:
    mit Stable-IDs/Referenzpfaden für Folgereads (`/patterns/3/notes/…`), plus Byte-Hash.
 4. **`server.py`** — MCP-Werkzeugfläche (Abschnitt 3), Fehler-Mapping auf lesbare Texte.
 
-## 3. Tool-Oberfläche (v1, as-built M1–M5)
+## 3. Tool-Oberfläche (v1, as-built M1–M5 + Export)
 
 Alle 29 Ops des verifizierten Builds sind abgedeckt; Fence-Felder werden
-**serverseitig** aus dem letzten Read gesetzt (kein Modell-Argument):
+**serverseitig** aus dem letzten Read gesetzt (kein Modell-Argument).
+Zusätzlich `lynx_export` — kein Op, sondern die sicher verkettete
+Headless-Schiene `project.read` → natives `.lynx` → `LYNX.exe --export`
+(der Export-Zweig verlässt LYNX' `initialise`, bevor der RC-Listener startet):
 
 | Tool | Wrapper um | Bemerkung |
 |---|---|---|
@@ -105,6 +108,7 @@ Alle 29 Ops des verifizierten Builds sind abgedeckt; Fence-Felder werden
 | `lynx_playlist_edit` | `playlist.edit` | 1–128 Edits: `add/update/duplicate/remove` |
 | `lynx_transport` | `transport.play/stop` | stop geht auch bei stale Fence |
 | `lynx_history` | `history.undo/redo` | `expectedDeviceStateHash?` als Guard |
+| `lynx_export` | `project.read` + `LYNX.exe --export` | kein Op; wav/flac/ogg/mp3/aif/m4a; Env `LYNX_EXE`; stummer Render = Fehler mit Grund; Timeout ⇒ `uncertain` |
 
 Live-verifizierte Protokoll-Details (Probing Nov 2026, Build 0.1.31.1):
 Read-Ops **lehnen** `expected*`-Felder ab (›Unknown field‹); Write-Ops prüfen das

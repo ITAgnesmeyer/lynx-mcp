@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import __version__, client, fence, summarize
+from . import __version__, client, fence, summarize, testhost
 
 MAX_REPLY_CHARS = 200_000     # Tool-Antworten gekürzt (~200 KiB, PLAN §4)
 SUMMARY_PAGES = 16            # <= 16 Seiten à 32 KiB pro summary-Read
@@ -516,3 +517,97 @@ def lynx_history(action: str, expected_device_state_hash: str | None = None) -> 
         return {"error": "invalid", "detail": "action: undo|redo"}
     return _write(f"history.{action}",
                   _clean(expectedDeviceStateHash=expected_device_state_hash))
+
+
+# --- Audio-Export (headless, ohne die laufende Instanz zu ändern) -------------
+
+EXPORT_FORMATS = ("wav", "flac", "ogg", "mp3", "aif", "m4a")
+EXPORT_TIMEOUT_MAX = 600
+
+
+def _num(s: str | None) -> float | None:
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+@mcp.tool()
+def lynx_export(format: str = "wav", sample_rate: int | None = None,
+                timeout_s: int = 120) -> dict[str, Any]:
+    """Aktuelle Session offline zu Audio rendern (lynx_export).
+
+    Kette: project.read (Vollread) -> natives .lynx im Snapshot-Ordner ->
+    LYNX.exe --export als neuer, fensterloser Prozess. Die laufende Instanz
+    wird nicht geändert (der Export-Zweig verlässt LYNX' initialise vor dem
+    Remote-Control-Listener); nur der Read verlangt gestopptes Playback.
+    Formate: wav/flac/aif 24 bit, mp3 320 kbit/s, m4a AAC 192 kbit/s;
+    sample_rate (8000–384000) wirkt nur bei wav. LYNX.exe-Pfad: Env
+    LYNX_EXE, sonst Installationsuche. Ein Timeout bricht den Exportprozess
+    ab — Ausgabedatei kann unvollständig sein, dann prüfen (lynx_status,
+    Datei-Größe), niemals blind wiederholen. Stummer Render gilt als
+    Fehler (silent:true mit Grund), die WAV-Datei existiert trotzdem."""
+    if format not in EXPORT_FORMATS:
+        return {"error": "invalid",
+                "detail": f"format: {'|'.join(EXPORT_FORMATS)}"}
+    if sample_rate is not None and not 8000 <= int(sample_rate) <= 384000:
+        return {"error": "invalid", "detail": "sample_rate 8000..384000"}
+    timeout_s = max(5, min(int(timeout_s), EXPORT_TIMEOUT_MAX))
+    try:
+        project, meta = _lynx().project_read_full(
+            max_pages=2048, page_limit=65536)
+    except Exception as exc:
+        return _fail(exc)
+    _fence.observe_snapshot(meta)
+    exe = testhost._exe_path()
+    if exe is None or not exe.is_file():
+        return {"error": "no_exe",
+                "detail": "LYNX.exe nicht gefunden — Pfad über Env LYNX_EXE "
+                          "setzen (setx LYNX_EXE \"C:\\pfad\\zu\\LYNX.exe\") "
+                          "oder portable Installation: s. README"}
+    odir = out_dir()
+    odir.mkdir(parents=True, exist_ok=True)
+    stem = f"export-{meta['projectId']}-r{meta['revision']}"
+    proj_file = odir / (stem + ".lynx")
+    proj_file.write_text(json.dumps(project, ensure_ascii=False),
+                         encoding="utf-8")
+    out = odir / (stem + "." + format)
+    args = [str(exe), "--export", str(proj_file), str(out)]
+    if sample_rate is not None and format == "wav":
+        args += ["--rate", str(int(sample_rate))]
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True,
+                              timeout=timeout_s, cwd=str(exe.parent))
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout", "uncertain": True,
+                "detail": f"Exportprozess nach {timeout_s}s abgebrochen — "
+                          f"{out} kann unvollständig sein"}
+    report = {}
+    rtxt = Path(str(out) + ".txt")          # LYNX schreibt <ausgabe>.txt
+    if rtxt.is_file():
+        for line in rtxt.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, val = line.partition("=")
+            if key in ("result", "peak", "song_seconds"):
+                report[key] = val.strip()
+    result = report.get("result", "")
+    exists = out.is_file()
+    ok = proc.returncode == 0 and exists
+    r: dict[str, Any] = {"ok": ok, "format": format,
+                         "file": str(out) if exists else None,
+                         "bytes": out.stat().st_size if exists else 0,
+                         "seconds": _num(report.get("song_seconds")),
+                         "peak": _num(report.get("peak"))}
+    if not ok:
+        r["detail"] = (result.removeprefix("ERROR ").strip()
+                       or f"LYNX.exe exit {proc.returncode}")
+        if "silent" in result.lower():
+            r["silent"] = True
+            r["hint"] = ("Render unter -60 dBFS: Projekt spielt nichts "
+                         "(Patterns/Clips leer oder stummgeschaltet) — Datei "
+                         "existiert, ist aber stumm.")
+        elif exists:
+            r["hint"] = "Abbruch nach Renderstart — Datei unvollständig, " \
+                        "Zustand prüfen statt wiederholen."
+    elif not exists:
+        r["detail"] = "LYNX meldet Erfolg, Ausgabedatei fehlt"
+    return r

@@ -107,7 +107,9 @@ Der Test-Host hat eine eigene CLI: `python -m lynx_mcp.testhost {start,stop,stat
 
 ## Tools (vollständige Remote-Control-Fläche)
 
-Alle 29 Ops des Builds `0.1.31.1` sind in 25 MCP-Tools abgebildet (live verifiziert):
+Alle 29 Ops des Builds `0.1.31.1` sind in 25 MCP-Tools abgebildet (live
+verifiziert); `lynx_export` ergänzt als 26. Tool den Headless-Export von
+LYNX.exe (kein Op, aber aus der API sauber ableitbar, s. unten):
 
 | Bereich | Tools |
 | --- | --- |
@@ -116,11 +118,38 @@ Alle 29 Ops des Builds `0.1.31.1` sind in 25 MCP-Tools abgebildet (live verifizi
 | Dokument | `lynx_patch` (JSON Patch, 1–128 Ops = 1 Undo) |
 | Typisierte Writes | `lynx_tempo_set` · `lynx_pattern_create` / `_clone` / `_set` · `lynx_notes_replace` · `lynx_channel_create` / `_set` · `lynx_mixer_set` · `lynx_instrument_replace` · `lynx_effect_load` / `_remove` · `lynx_plugin_parameters` · `lynx_playlist_edit` |
 | Transport/Historie | `lynx_transport` (play/stop) · `lynx_history` (undo/redo) |
+| Export | `lynx_export` (Audio-Render: wav/flac/ogg/mp3/aif/m4a) |
 
 Das Fence-Tripel (`expectedProjectId`/`expectedEpoch`/`expectedRevision`) setzt der
 Server **selbst** aus dem zuletzt beobachteten Read — Write-Tools brauchen es nie
 als Argument, und kein Write geht ohne vorherigen Read raus (Guard-Fehler
 `stale_fence`).
+
+### Audio-Export (`lynx_export`)
+
+Die Remote-Control-API selbst hat keinen Export-Ops — aber LYNX.exe bringt
+einen fensterlosen Export-Modus mit (`LYNX.exe --export <in> <out>`).
+`lynx_export` verkettet beides sicher:
+
+1. **Vollread** der laufenden Session (`project.read`, verlangt gestopptes
+   Playback) → natives Projekt-JSON (`.lynx`) im Snapshot-Ordner,
+2. **neuer LYNX-Prozess** rendert daraus WAV (24 bit), FLAC, OGG, MP3
+   (320 kbit/s), AIFF oder M4A/AAC — die laufende Instanz wird dabei nicht
+   angefasst (der Export-Zweig verlässt LYNX' `initialise`, bevor der
+   Remote-Control-Listener startet),
+3. **Report-Parsing**: `result`/`peak`/`song_seconds` aus der von LYNX
+   geschriebenen `.txt` landen strukturiert in der Antwort.
+
+Voraussetzung ist der Pfad zu `LYNX.exe` (Env `LYNX_EXE`, sonst
+Installationssuche — wie beim Test-Host). Ein stiller Render gilt als Fehler
+(`silent: true` mit Grund) — die Datei existiert dann trotzdem. Ein Timeout
+bricht den Exportprozess ab und meldet `uncertain` (Datei teilgeschrieben),
+also nicht blind wiederholen.
+
+**Herkommen von Audio geht umgekehrt nicht über die API**: Neue Sample-/
+Asset-Pfade sind in `project.edit` allowlist-seitig gesperrt („cannot
+introduce new sample/zone paths") — Imports bleiben der UI vorbehalten;
+danach platziert der Agent Audio-Clips frei über `lynx_playlist_edit`.
 
 ## Status
 

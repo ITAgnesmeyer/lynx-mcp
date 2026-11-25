@@ -95,6 +95,34 @@ lynx_plugin_parameters target={…} parameters=[{index, value 0..1,
 `{kind:"effect", mixerIndex, effectIndex}`). Native Instrumente sind für
 `plugin.parameters_set` gesperrt — dann channel-Mixer-Werte nutzen.
 
+## Rezept 5 — Audio-Export & Projektwechsel (kein Op — Seiteneingang der CLI)
+
+Die API kennt weder Export noch `project.open`; LYNX.exe hat aber
+Headless-Modi, und `lynx_export` nutzt sie sicher verkettet:
+
+```
+lynx_transport action=stop        # der Read-Teil braucht gestopptes Playback
+lynx_export format=wav            # project.read -> .lynx -> LYNX.exe --export
+                                  # → {file, seconds, peak}; silent=true bei Stille
+```
+
+`lynx_export` ist read-only für die laufende Instanz (nebenläufige
+UI-Arbeit ist ok; nur playback muss stehen). Formate: wav/flac/aif/mp3/
+ogg/m4a. Voraussetzung: `LYNX.exe` auffindbar (Env `LYNX_EXE`).
+
+**Projekt wechseln** geht nur über Neustart:
+
+```
+lynx_transport action=stop
+→ NUTZER muss in der UI speichern (Strg+S) — es gibt keinen save-Ops!
+testhost stop && testhost start --projekt D:\pfad\song.lynx
+lynx_describe                     # neue Instanz: epoch/revision sind neu
+```
+
+**Fremde WAVs hinein** geht ebenfalls nicht (Asset-Allowlist sperrt neue
+Sample-Pfade in `project.edit`): Import in der UI, danach platziert der
+Agent die Audio-Clips per `lynx_playlist_edit`.
+
 ## Polling statt Push
 
 LYNX sendet keine Events. Nach fremden Änderungen (Nutzer tippt in der UI):

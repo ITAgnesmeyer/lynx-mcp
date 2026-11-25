@@ -5,9 +5,12 @@ Prüft die Sicherheits-Semantik, nicht das Wire-Format (das testet test_client):
 - Read-Ops werden die expected*-Felder NICHT mitgeschickt (LYNX lehnt sie ab)
 - project.edit verlangt einen echten Snapshot aus dem letzten Vollread
 - Parameter-/Playlist-/Control-Guards stoppen ungültige Aufrufe vor dem Socket
+- lynx_export: Snapshot -> .lynx -> Pseudo-LYNX-Prozess (Report-Parsing)
 """
 
 import json
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -182,3 +185,101 @@ def test_out_dir_falls_back_to_localappdata_outside_checkout(tmp_path, monkeypat
                         str(tmp_path / "site-packages" / "lynx_mcp" / "server.py"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lap"))
     assert server.out_dir() == tmp_path / "lap" / "lynx-mcp" / "out"
+
+
+# --- lynx_export: Kette ohne echtes LYNX (Pseudo-Prozess) ---------------------
+
+class _Proc:
+    def __init__(self, returncode): self.returncode = returncode
+
+
+_REAL_RUN = subprocess.run   # client._info() prüft die Listener-PID via tasklist
+
+
+def _export_only(fake):
+    """Patch für subprocess.run: LYNX-Aufrufe ans Fake, alles echte (tasklist)
+    bleibt beim echten Runner."""
+    def run(args, **kw):
+        if len(args) > 1 and args[1] == "--export":
+            return fake(args, **kw)
+        return _REAL_RUN(args, **kw)
+    return run
+
+
+def _export_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("LYNX_MCP_OUT_DIR", str(tmp_path / "out"))
+    exe = tmp_path / "LYNX.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(server.testhost, "_exe_path", lambda cli=None: exe)
+    mock_pages = json.dumps({"bpm": 120.0}).encode()
+    return mock_pages
+
+
+def test_export_format_guard_before_any_io(mock, tmp_path, monkeypatch):
+    monkeypatch.setattr(server.testhost, "_exe_path", lambda cli=None: None)
+    r = server.lynx_export("mp4")
+    assert r["error"] == "invalid"
+    assert mock.requests == []           # nichts gegangen raus — weder Read noch Prozess
+
+
+def test_export_success_chain(mock, tmp_path, monkeypatch):
+    doc = _export_env(tmp_path, monkeypatch)
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen["args"] = args
+        out = Path(args[3])
+        out.write_bytes(b"RIFF-dummy")
+        Path(str(out) + ".txt").write_text(
+            "peak=0.5\nsong_seconds=3.25\nresult=OK\n", encoding="utf-8")
+        return _Proc(0)
+
+    monkeypatch.setattr(server.subprocess, "run", _export_only(fake_run))
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav")
+    assert r["ok"] is True and r["format"] == "wav"
+    assert r["seconds"] == 3.25 and r["peak"] == 0.5
+    assert Path(r["file"]).is_file()
+    # aufgerufen mit: exe --export <natives .lynx> <out.wav>
+    args = seen["args"]
+    assert args[1] == "--export" and args[2].endswith(".lynx") and args[3].endswith(".wav")
+    assert json.loads(Path(args[2]).read_text(encoding="utf-8"))["bpm"] == 120.0
+
+
+def test_export_silent_render_reports_reason(mock, tmp_path, monkeypatch):
+    doc = _export_env(tmp_path, monkeypatch)
+
+    def fake_run(args, **kw):
+        out = Path(args[3])
+        out.write_bytes(b"RIFF-dummy")            # Datei existiert, ist aber stumm
+        Path(str(out) + ".txt").write_text(
+            "peak=0\nsong_seconds=6.23\nresult=ERROR the render is silent"
+            " (its peak stays below -60 dBFS)\n", encoding="utf-8")
+        return _Proc(1)
+
+    monkeypatch.setattr(server.subprocess, "run", _export_only(fake_run))
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav")
+    assert r["ok"] is False and r["silent"] is True
+    assert "silent" in r["detail"] and r["file"]            # Pfad bleibt nutzbar
+
+
+def test_export_no_exe_after_read(mock, tmp_path, monkeypatch):
+    monkeypatch.setenv("LYNX_MCP_OUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setattr(server.testhost, "_exe_path", lambda cli=None: None)
+    doc = json.dumps({"bpm": 120.0}).encode()
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("wav")
+    assert r["error"] == "no_exe" and "LYNX_EXE" in r["detail"]
+
+
+def test_export_timeout_is_uncertain(mock, tmp_path, monkeypatch):
+    doc = _export_env(tmp_path, monkeypatch)
+
+    def hang(args, **kw):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kw["timeout"])
+
+    monkeypatch.setattr(server.subprocess, "run", _export_only(hang))
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_export("ogg")
+    assert r["error"] == "timeout" and r["uncertain"] is True
