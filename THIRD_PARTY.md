@@ -49,8 +49,8 @@ Quell-/`dist-info`-Verzeichnissen und über die verlinkten Projekte.
 
 | Komponente | Lizenz | Anmerkung |
 |---|---|---|
-| [LYNX SHARE](https://github.com/Ka1-S/LYNX-SHARE) | **AGPL-3.0** | **Nicht Bestandteil dieses Repositories.** `lynx-mcp` enthält keinen Code, keine Assets und keine Dokumentation von LYNX SHARE; es verbindet sich lediglich als TCP-Client mit einer laufenden Instanz über das dokumentierte `lynx-control/1`-Protokoll ([REMOTE_CONTROL.md](https://github.com/Ka1-S/LYNX-SHARE/blob/main/docs/REMOTE_CONTROL.md)). Die DAW ist ein eigenständiges, getrenntes Programm; für die Nutzung gilt die EULA/Lizenz von LYNX SHARE selbst. |
-| Python-Laufzeit (CPython ≥ 3.10) | PSF | `lynx-mcp` nutzt nur die Standardbibliothek (`socket`, `hashlib`, `hmac`, `json`, …); deren Dokumentation unterliegt der PSF-Lizenz. |
+| [LYNX SHARE](https://github.com/Ka1-S/LYNX-SHARE) | **AGPL-3.0** | **Nicht Bestandteil dieses Repositories.** `lynx-mcp` enthält keinen Code, keine Assets und keine Dokumentation von LYNX SHARE; es verbindet sich als TCP-Client mit einer laufenden Instanz über das dokumentierte `lynx-control/1`-Protokoll ([REMOTE_CONTROL.md](https://github.com/Ka1-S/LYNX-SHARE/blob/main/docs/REMOTE_CONTROL.md)) und startet für den Audio-Export (`lynx_export`) eine **vom Nutzer installierte** `LYNX.exe` als separaten, fensterlosen Prozess (`LYNX.exe --export`) — auch diese wird nicht mitgeliefert, nicht vervielfältigt und nur über den vom Nutzer gesetzten Pfad (Env `LYNX_EXE`) bzw. die Installationsuche aufgerufen. Die DAW bleibt ein eigenständiges, getrenntes Programm; für ihre Nutzung gilt die EULA/Lizenz von LYNX SHARE selbst. |
+| Python-Laufzeit (CPython ≥ 3.10) | PSF | `lynx-mcp` nutzt nur die Standardbibliothek (`socket`, `hashlib`, `hmac`, `json`, `subprocess`, …); deren Dokumentation unterliegt der PSF-Lizenz. |
 
 ## Entwicklungs- und Build-Werkzeuge (nicht mit ausgeliefert)
 
@@ -63,6 +63,8 @@ Quell-/`dist-info`-Verzeichnissen und über die verlinkten Projekte.
 | `Pygments` | 2.21.0 | BSD-2-Clause | [pygments/pygments](https://github.com/pygments/pygments) |
 | `hatchling` (Build-Backend) | aktuell | MIT | [pypa/hatch](https://github.com/pypa/hatch) |
 | [`uv`](https://docs.astral.sh/uv/) (Start/Tooling) | aktuell | Apache-2.0 **oder** MIT (Wahl) | [astral-sh/uv](https://github.com/astral-sh/uv) |
+| `ruff` (Lint; global via `uv tool`, nicht in `uv.lock`) | 0.17.6 | MIT | [astral-sh/ruff](https://github.com/astral-sh/ruff) |
+| `pyright` (Typcheck; global via `uv tool`; nutzt Node.js, MIT) | 1.1.414 | MIT | [microsoft/pyright](https://github.com/microsoft/pyright) |
 
 ## Hinweise
 
