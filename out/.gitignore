@@ -1,0 +1,4 @@
+# Dieser Ordner bleibt leer eingecheckt; lynx_snapshot schreibt hierhin
+# vollständige Projekt-JSONs (nicht versionieren).
+*
+!.gitignore
