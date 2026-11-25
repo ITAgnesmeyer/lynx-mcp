@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -41,6 +42,32 @@ def out_dir() -> Path:
         return repo / "out"
     base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
     return Path(base) / "lynx-mcp" / "out"
+
+
+def _dir_arg(p: str | None) -> Path:
+    """Optionaler Zielordner aus einem Tool-Parameter: explizit statt
+    festgeschrieben, damit Pfad-Richtlinien des Agenten hier greifen können.
+    None/leer = Standard (out_dir()). Absolutpflicht, ~ wird expandiert."""
+    if p is None or not str(p).strip():
+        return out_dir()
+    d = Path(str(p)).expanduser()
+    if not d.is_absolute():
+        raise ValueError("out_dir muss absolut angegeben werden "
+                         "(z. B. D:\\musik\\projekt)")
+    return d
+
+
+def _name_arg(s: str | None) -> str | None:
+    """Dateistempel ohne Pfad und ohne Endung; None = Auto-Name.
+    Separatoren, '..', Kontrollzeichen und Längen > 96 sind raus."""
+    if s is None or not str(s).strip():
+        return None
+    stem = str(s).strip()
+    if ".." in stem or re.search(r'[\\/:*?"<>|\x00-\x1f]', stem) \
+            or len(stem) > 96:
+        raise ValueError("filename nur als reiner Name ohne Pfad "
+                         "(max 96 Zeichen)")
+    return stem
 
 _fence = fence.Fence()
 _client: client.LynxClient | None = None
@@ -245,18 +272,24 @@ def lynx_read(scope: str = "summary", pattern_index: int | None = None,
 
 
 @mcp.tool()
-def lynx_snapshot(max_pages: int = 2048) -> dict[str, Any]:
+def lynx_snapshot(max_pages: int = 2048,
+                  out_dir: str | None = None) -> dict[str, Any]:
     """Komplettes Projekt-JSON auf Disk statt in den Kontext.
 
-    Zielpfad: Env LYNX_MCP_OUT_DIR, sonst out/ neben dem Repo (Dev) bzw.
-    %LOCALAPPDATA%\\lynx-mcp\\out (installierter Lauf). Gibt Pfad +
+    Ziel: out_dir (absolut, ~ erlaubt) oder Standard — Env LYNX_MCP_OUT_DIR,
+    sonst out/ neben dem Repo (Dev) bzw. %LOCALAPPDATA%\\lynx-mcp\\out.
+    Expliziter Zielordner statt festgeschriebener Pfade, damit
+    Agenten-Richtlinien den Schreibpfad prüfen können. Gibt Pfad +
     documentHash + Fence zurück; Basis für große lynx_patch-Pläne.
     Erfordert gestopptes Playback; Snapshot max 64 MiB, 4 behaltene Snapshots."""
+    try:
+        odir = _dir_arg(out_dir)
+    except ValueError as exc:
+        return {"error": "invalid", "detail": str(exc)}
     try:
         project, meta = _lynx().project_read_full(
             max_pages=max_pages, page_limit=65536)
         _fence.observe_snapshot(meta)
-        odir = out_dir()
         odir.mkdir(parents=True, exist_ok=True)
         path = odir / f"snapshot-{meta['projectId']}-r{meta['revision']}.json"
         path.write_text(json.dumps(project, ensure_ascii=False, indent=1),
@@ -615,7 +648,8 @@ def _crop_project(project: dict, start: int, end: int | None) -> tuple[
 @mcp.tool()
 def lynx_export(format: str = "wav", sample_rate: int | None = None,
                 timeout_s: int = 120, start_ticks: int | None = None,
-                end_ticks: int | None = None) -> dict[str, Any]:
+                end_ticks: int | None = None, out_dir: str | None = None,
+                filename: str | None = None) -> dict[str, Any]:
     """Aktuelle Session offline zu Audio rendern (lynx_export).
 
     Kette: project.read (Vollread) -> natives .lynx im Snapshot-Ordner ->
@@ -632,12 +666,21 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
     diesen Bereich: Der Schnitt liegt im Snapshot (Playlist-Clips,
     Arrangements, Automations-Punkte — ohne Rand-Interpolation), die
     Instanz und ihre Selection bleiben unberührt; ohne end_ticks bis
-    Song-Ende. Leerer Bereich → empty_range, kein Exportprozess."""
+    Song-Ende. Leerer Bereich → empty_range, kein Exportprozess.
+    out_dir (absolut, ~ erlaubt) schreibt das Audio in diesen Ordner statt
+    in den Standard-Snapshot-Ordner — Pfad richtliniengreifbar statt
+    festgeschrieben; filename setzt den Namen (ohne Pfad/Endung). Nur das
+    Audio landet dort, Arbeitsdateien bleiben im Arbeitsordner."""
     if format not in EXPORT_FORMATS:
         return {"error": "invalid",
                 "detail": f"format: {'|'.join(EXPORT_FORMATS)}"}
     if sample_rate is not None and not 8000 <= int(sample_rate) <= 384000:
         return {"error": "invalid", "detail": "sample_rate 8000..384000"}
+    try:
+        target = _dir_arg(out_dir)
+        custom = _name_arg(filename)
+    except ValueError as exc:
+        return {"error": "invalid", "detail": str(exc)}
     start = int(start_ticks or 0)
     end = None if end_ticks is None else int(end_ticks)
     if start < 0 or (end is not None and end <= start):
@@ -665,15 +708,19 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
                 "detail": "LYNX.exe nicht gefunden — Pfad über Env LYNX_EXE "
                           "setzen (setx LYNX_EXE \"C:\\pfad\\zu\\LYNX.exe\") "
                           "oder portable Installation: s. README"}
-    odir = out_dir()
-    odir.mkdir(parents=True, exist_ok=True)
+    work = _dir_arg(None)        # Arbeitsordner = Standard (nicht das Ziel)
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"error": "invalid", "detail": f"out_dir nicht anlegbar: {exc}"}
     stem = f"export-{meta['projectId']}-r{meta['revision']}"
     if start or end is not None:
         stem += f"-{start}x{end if end is not None else 'e'}"
-    proj_file = odir / (stem + ".lynx")
+    proj_file = work / (stem + ".lynx")  # Arbeitsdatei: immer Arbeitsordner
     proj_file.write_text(json.dumps(project, ensure_ascii=False),
                          encoding="utf-8")
-    out = odir / (stem + "." + format)
+    out = target / ((custom or stem) + "." + format)
     args = [str(exe), "--export", str(proj_file), str(out)]
     if sample_rate is not None and format == "wav":
         args += ["--rate", str(int(sample_rate))]
@@ -692,6 +739,10 @@ def lynx_export(format: str = "wav", sample_rate: int | None = None,
             key, _, val = line.partition("=")
             if key in ("result", "peak", "song_seconds"):
                 report[key] = val.strip()
+        try:  # Report ist Arbeitsdatei — gehört nicht ins Zielverzeichnis
+            rtxt.replace(work / (stem + "." + format + ".txt"))
+        except OSError:
+            pass
     result = report.get("result", "")
     exists = out.is_file()
     ok = proc.returncode == 0 and exists

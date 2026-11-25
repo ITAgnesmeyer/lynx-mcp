@@ -354,3 +354,53 @@ def test_export_empty_range_needs_no_process(mock, tmp_path, monkeypatch):
 def test_export_range_validation_before_io(mock):
     r = server.lynx_export("wav", start_ticks=5000, end_ticks=5000)
     assert r["error"] == "invalid" and mock.requests == []
+
+
+# --- lynx_export/lynx_snapshot: Zielordner als Parameter ------------------------
+
+def _ok_fake(seen=None):
+    def fake_run(args, **kw):
+        if seen is not None:
+            seen.append(args)
+        out = Path(args[3])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"RIFF-dummy")
+        Path(str(out) + ".txt").write_text("result=OK\npeak=0.5\n",
+                                          encoding="utf-8")
+        return _Proc(0)
+    return fake_run
+
+
+def test_export_out_dir_target_gets_only_audio(mock, tmp_path, monkeypatch):
+    doc = _export_env(tmp_path, monkeypatch)      # work = tmp/out
+    monkeypatch.setattr(server.subprocess, "run", _export_only(_ok_fake()))
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    ziel = tmp_path / "musik"
+    r = server.lynx_export("wav", out_dir=str(ziel), filename="hoerprobe")
+    assert r["ok"] is True
+    assert Path(r["file"]) == ziel / "hoerprobe.wav"
+    assert list(ziel.iterdir()) == [ziel / "hoerprobe.wav"]  # Report umgezogen
+    assert any(p.name.endswith(".wav.txt") for p in (tmp_path / "out").iterdir())
+    assert any(p.suffix == ".lynx" for p in (tmp_path / "out").iterdir())
+
+
+def test_export_out_dir_relative_rejected_before_io(mock):
+    r = server.lynx_export("wav", out_dir="musik/ziel")
+    assert r["error"] == "invalid" and mock.requests == []
+
+
+def test_export_filename_with_path_rejected(mock):
+    r = server.lynx_export("wav", filename="ordner/hoerprobe")
+    assert r["error"] == "invalid" and mock.requests == []
+    r = server.lynx_export("wav", filename="a..b")
+    assert r["error"] == "invalid" and mock.requests == []
+
+
+def test_snapshot_out_dir_param(mock, tmp_path):
+    doc = json.dumps({"bpm": 120.0}).encode()
+    mock.respond("project.read", make_read_pages(doc, page_size=64))
+    r = server.lynx_snapshot(out_dir=str(tmp_path / "snap"))
+    assert Path(r["path"]).parent == tmp_path / "snap"
+    assert (tmp_path / "snap").is_dir()
+    r = server.lynx_snapshot(out_dir="relativ")
+    assert r["error"] == "invalid"

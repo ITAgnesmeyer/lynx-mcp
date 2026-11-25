@@ -108,7 +108,7 @@ Headless-Schiene `project.read` → natives `.lynx` → `LYNX.exe --export`
 | `lynx_playlist_edit` | `playlist.edit` | 1–128 Edits: `add/update/duplicate/remove` |
 | `lynx_transport` | `transport.play/stop` | stop geht auch bei stale Fence |
 | `lynx_history` | `history.undo/redo` | `expectedDeviceStateHash?` als Guard |
-| `lynx_export` | `project.read` + `LYNX.exe --export` | kein Op; wav/flac/ogg/mp3/aif/m4a; Env `LYNX_EXE`; stummer Render = Fehler mit Grund; Timeout ⇒ `uncertain`; `start_ticks`/`end_ticks` schneiden den Bereich im Snapshot (Selection headless) |
+| `lynx_export` | `project.read` + `LYNX.exe --export` | kein Op; wav/flac/ogg/mp3/aif/m4a; Env `LYNX_EXE`; stummer Render = Fehler mit Grund; Timeout ⇒ `uncertain`; `start_ticks`/`end_ticks` schneiden den Bereich im Snapshot (Selection headless); `out_dir`/`filename` als Parameter statt festgeschriebener Pfade |
 
 Live-verifizierte Protokoll-Details (Probing Nov 2026, Build 0.1.31.1):
 Read-Ops **lehnen** `expected*`-Felder ab (›Unknown field‹); Write-Ops prüfen das

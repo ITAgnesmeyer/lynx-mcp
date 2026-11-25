@@ -119,6 +119,15 @@ lynx_export format=wav end_ticks=30720   # nur die ersten 8 Takte
 lynx_export format=wav start_ticks=61440 # ab Takt 16 bis Song-Ende
 ```
 
+**Zielort:** `out_dir` (absolut) + `filename` (ohne Pfad/Endung) schreiben
+den Ton direkt in den Projektordner des Nutzers — Pfade sind Parameter,
+keine festgeschriebene Voreinstellung (Agenten-Richtlinien greifen davor);
+Arbeitsdateien bleiben im Standard-Arbeitsordner:
+
+```
+lynx_export format=mp3 end_ticks=30720 out_dir="D:\musik\projekt" filename="hoerprobe"
+```
+
 **Projekt wechseln** geht nur über Neustart:
 
 ```

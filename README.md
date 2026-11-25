@@ -146,6 +146,16 @@ Installationssuche — wie beim Test-Host). Ein stiller Render gilt als Fehler
 bricht den Exportprozess ab und meldet `uncertain` (Datei teilgeschrieben),
 also nicht blind wiederholen.
 
+**Zielort als Parameter:** `lynx_export` und `lynx_snapshot` nehmen ein
+explizites `out_dir` (absolut, `~` erlaubt) und `lynx_export` zusätzlich
+einen `filename` (reiner Name ohne Pfad/Endung) — ohne Angabe gilt der
+Standardordner (Env `LYNX_MCP_OUT_DIR` > `out/` im Repo >
+`%LOCALAPPDATA%\lynx-mcp\out`). Festgeschriebene Pfade sind bewusst keine
+Einbahnstraße: Agenten-Richtlinien, die Schreibpfade erlauben oder
+verbieten, greifen am Parameter — nicht an einer versteckten Voreinstellung.
+Arbeitsdateien (Snapshot-`.lynx`, Render-Report) bleiben dabei immer im
+Arbeitsordner, im Zielordner steht nur der fertigen Ton.
+
 **Bereichs-Export:** LYNX' Selection (Loop-Region) ist im headless Export
 nicht erreichbar — `lynx_export` schneidet den Wunschbereich deshalb im
 Snapshot zu: `start_ticks`/`end_ticks` (PPQ 960, 1 Takt 4/4 = 3840) kürzen
