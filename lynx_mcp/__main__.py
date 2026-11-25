@@ -74,8 +74,13 @@ def _probe(discovery_path: Path) -> int:
             file=sys.stderr,
         )
         return 2
-    print(f"OK: {info['protocol']}, Port {info['port']}, pid {info['pid']}",
-          file=sys.stderr)
+    listener = client.process_image(int(info["pid"]))
+    if listener is None:
+        print(f"WARNUNG: Discovery-Datei verwaist — Listener-pid {info['pid']} lebt nicht "
+              "(LYNX wurde ohne Bereinigung beendet?).", file=sys.stderr)
+        return 2
+    print(f"OK: {info['protocol']}, Port {info['port']}, pid {info['pid']} "
+          f"(Prozess {info['pid']} ist {listener}).", file=sys.stderr)
     # Vollständiger Handshake + Ops folgen in M1 (client.LynxClient).
     print(
         "Handshake/Status-Abfrage ist noch nicht implementiert (Meilenstein M1).",

@@ -46,7 +46,7 @@ Nach einem Publish auf PyPI genügt `uvx lynx-mcp`.
 }
 ```
 
-### Entwicklung / klassische Installation
+## Entwicklung / klassische Installation
 
 ```console
 pip install -e .
@@ -54,6 +54,26 @@ python -m lynx_mcp --help
 python -m lynx_mcp probe     # Verbindungstest gegen eine laufende Instanz
 python -m lynx_mcp serve     # MCP-Server über stdio (Default)
 ```
+
+## Test-Host (LYNX starten/beenden)
+
+Zum Entwickeln und für Smoke-Tests kannst du LYNX mit aktivierter Remote Control
+über die Environment-Variable `LYNX_CONTROL_ENABLED=1` starten:
+
+```console
+uv run python -m lynx_mcp.testhost start        # detachter Run, Remote Control an,
+                                                # wartet auf die Discovery-Datei
+uv run python -m lynx_mcp.testhost status        # Instanz-, exe- und Discovery-Lage
+uv run python -m lynx_mcp.testhost stop          # nur die von testhost gestartete Instanz
+```
+
+- Pfad zu `LYNX.exe`: Default `D:\audacity\LYNX\LYNX.exe`, überschreibbar mit
+  `--exe` oder Env `LYNX_EXE`; eine Projektdatei wird optional mit `--projekt`
+  zum Start übergeben.
+- `stop` beendet ausschließlich Instanzen, die testhost selbst gestartet hat
+  (PID-State-Datei + Bildnamen-Prüfung gegen PID-Wiederverwendung).
+- Verwaiste Discovery-Dateien (LYNX ohne Bereinigung beendet) erkennen
+  `start`/`status`/`probe` an der toten Listener-PID.
 
 ## CLI
 
@@ -63,6 +83,8 @@ lynx-mcp [--discovery PFAD] {serve, probe}
   serve   MCP-Server über stdio starten (Default)
   probe   Discovery + Verbindung einmalig testen (kein MCP-Server)
 ```
+
+Der Test-Host hat eine eigene CLI: `python -m lynx_mcp.testhost {start,stop,status}`.
 
 ## Status
 

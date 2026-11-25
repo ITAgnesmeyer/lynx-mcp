@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,26 @@ def load_discovery(path: Path) -> dict[str, Any]:
         if field not in info:
             raise DiscoveryError(f"Discovery-Datei fehlt Feld {field!r}")
     return info
+
+
+def process_image(pid: int) -> str | None:
+    """Bildname des Prozesses oder None (tot/unbekannt) — nur Windows via tasklist.
+
+    Dient der pid-Prüfung gegen Port-Wiederverwendung (PLAN.md §1); tasklist ist
+    lokalisiert, daher bytes mit errors="replace" decodieren.
+    """
+    try:
+        raw = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+            capture_output=True, check=False,
+        ).stdout
+    except (OSError, ValueError):
+        return None
+    for line in (raw or b"").decode("ascii", errors="replace").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == str(int(pid)):
+            return parts[0]
+    return None
 
 
 class LynxClient:

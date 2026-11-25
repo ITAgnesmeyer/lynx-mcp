@@ -150,6 +150,8 @@ zu wählen, z. B. `D:\projects\lynx-mcp\`):
     fence.py              (revision/snapshot-Fence-Cache)
     summarize.py          (Projekt-JSON → Kurzstruktur)
     server.py             (MCP-Tools, v1-Menge aus §3)
+    testhost.py           (Test-Host: LYNX.exe via LYNX_CONTROL_ENABLED=1
+                           starten/beenden, PID-State + Discovery-Wait)
   out/                    (von `lynx_snapshot` beschriebene Projekt-JSONs)
   tests/                  (Mock-Listener: Handshake + canned Ops gegen client.py)
 ```
